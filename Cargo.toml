@@ -1,0 +1,48 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/silence-core",
+    "crates/silence-langs",
+    "crates/silence-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/hasparus/silence"
+rust-version = "1.82"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+[workspace.dependencies]
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+tree-sitter-python = "0.25"
+tree-sitter-go = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-toml-ng = "0.7"
+
+clap = { version = "4.6", features = ["derive"] }
+ignore = "0.4"
+rayon = "1.12"
+git2 = { version = "0.21", default-features = false }
+toml = "1.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+globset = "0.4"
+anyhow = "1"
+thiserror = "2"
+
+silence-strip-core = { path = "crates/silence-core", version = "0.1.0" }
+silence-strip-langs = { path = "crates/silence-langs", version = "0.1.0" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
