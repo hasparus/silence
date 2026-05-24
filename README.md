@@ -83,7 +83,7 @@ know that I asked.
 ## preserve rules
 
 A comment is kept when it matches a preserve pattern **or looks like a
-directive** — body starting with `@`, shaped `namespace:value`, or an XML-ish
+directive**: i.e. body starting with `@`, shaped `namespace:value`, or an XML-ish
 `<tag … />` (so `@ts-ignore`, `//go:embed`, `/// <reference />` survive
 without a rule each). A `#!` shebang on line 1 is never removed.
 
@@ -121,8 +121,7 @@ cargo test
 
 ## adding a language
 
-1. Add the grammar crate to the workspace `Cargo.toml`.
-2. Add an arm to `Lang::from_extension`, `grammar()`, and `comment_query()`.
-3. Done — the engine is untouched. The
-   `every_grammar_loads_and_query_compiles` test verifies the grammar/query/ABI
+1. add a grammar crate to the workspace `Cargo.toml`
+2. update `Lang::from_extension`, `grammar()`, and `comment_query()`.
+3. `every_grammar_loads_and_query_compiles` test verifies the grammar/query/ABI
    line up.
