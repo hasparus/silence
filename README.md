@@ -65,9 +65,10 @@ know that I asked.
 **Agent hooks**
 
 - `--install-hook` — wire `silence --hook` into `~/.claude/`, `~/.codex/`,
-  `~/.config/opencode/plugin/`, `~/.pi/agent/extensions/`
+  `~/.config/opencode/plugins/`, `~/.pi/agent/extensions/`
+- `--install-hook --to codex --to claude` — install only selected agent hooks
 - `--install-hook --project` — same files under the current directory
-- `--uninstall-hook` — clean up both global and project installs
+- `--uninstall-hook` — clean up installed hooks
 - `--hook-status` (alias `--list-hooks`) — per-agent install state
 - `--project` — scope the hook commands to the current project instead of `~`
 - `--hook` — the post-edit handler itself: reads a path arg or the agent's

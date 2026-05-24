@@ -106,11 +106,18 @@ impl PreserveConfig {
                 return true;
             }
         }
-        if self.directives && looks_like_directive(comment_text) {
+        if self.directives
+            && (looks_like_doc_comment(comment_text) || looks_like_directive(comment_text))
+        {
             return true;
         }
         false
     }
+}
+
+fn looks_like_doc_comment(text: &str) -> bool {
+    let t = text.trim_start();
+    t.starts_with("///") || t.starts_with("//!") || t.starts_with("/**") || t.starts_with("/*!")
 }
 
 fn comment_body(text: &str) -> &str {
@@ -191,6 +198,15 @@ mod tests {
     }
 
     #[test]
+    fn doc_comments_are_preserved_by_default() {
+        let c = PreserveConfig::default();
+        assert!(c.should_preserve("/// Public docs."));
+        assert!(c.should_preserve("//! Module docs."));
+        assert!(c.should_preserve("/** JSDoc docs. */"));
+        assert!(c.should_preserve("/*! Crate docs. */"));
+    }
+
+    #[test]
     fn ordinary_prose_is_not_treated_as_a_directive() {
         let c = PreserveConfig::default();
         assert!(!c.should_preserve("// just a normal comment"));
@@ -202,5 +218,6 @@ mod tests {
     fn directive_preservation_is_off_for_with_patterns() {
         let c = PreserveConfig::with_patterns(vec!["TODO".into()]);
         assert!(!c.should_preserve("// @ts-ignore"));
+        assert!(!c.should_preserve("/// docs"));
     }
 }

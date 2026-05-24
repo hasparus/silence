@@ -66,6 +66,8 @@ struct Cli {
     hook_status: bool,
     #[arg(long)]
     project: bool,
+    #[arg(long = "to", value_enum)]
+    hook_agents: Vec<hooks::Agent>,
 
     #[arg(long)]
     config: bool,
@@ -99,19 +101,22 @@ fn run() -> Result<()> {
     if cli.create_config {
         return create_config();
     }
+    if !(cli.hook_agents.is_empty() || cli.install_hook || cli.uninstall_hook || cli.hook_status) {
+        anyhow::bail!("--to requires --install-hook, --uninstall-hook, or --hook-status");
+    }
     let hook_scope = if cli.project {
         hooks::Scope::Project
     } else {
         hooks::Scope::User
     };
     if cli.install_hook {
-        return hooks::install(hook_scope);
+        return hooks::install(hook_scope, &cli.hook_agents);
     }
     if cli.uninstall_hook {
-        return hooks::uninstall(hook_scope);
+        return hooks::uninstall(hook_scope, &cli.hook_agents);
     }
     if cli.hook_status {
-        return hooks::status(hook_scope);
+        return hooks::status(hook_scope, &cli.hook_agents);
     }
 
     if let Some(n) = cli.threads {
@@ -206,11 +211,15 @@ fn run() -> Result<()> {
         .collect();
 
     let mut error_count = 0usize;
-    for r in &results {
+    let mut changed_paths = Vec::new();
+    for ((path, _), r) in jobs.iter().zip(&results) {
         match r {
-            JobResult::Ok { removed } if *removed > 0 => {
+            JobResult::Ok { removed, changed } if *removed > 0 => {
                 removed_total.fetch_add(*removed, Ordering::Relaxed);
                 files_with_comments.fetch_add(1, Ordering::Relaxed);
+                if *changed {
+                    changed_paths.push(path.clone());
+                }
             }
             JobResult::Err { path, msg } => {
                 error_count += 1;
@@ -218,6 +227,10 @@ fn run() -> Result<()> {
             }
             JobResult::Ok { .. } => {}
         }
+    }
+
+    if cli.staged && !cli.check {
+        git::stage_paths(&changed_paths)?;
     }
 
     let total = removed_total.load(Ordering::Relaxed);
@@ -254,7 +267,7 @@ struct Settings {
 }
 
 enum JobResult {
-    Ok { removed: usize },
+    Ok { removed: usize, changed: bool },
     Err { path: PathBuf, msg: String },
 }
 
@@ -274,7 +287,10 @@ fn kinds_from_flags(inline: bool, block: bool) -> CommentKinds {
 
 fn process_one(path: &Path, ranges: &[(usize, usize)], s: &Settings) -> JobResult {
     let Some(lang) = lang_for(path) else {
-        return JobResult::Ok { removed: 0 };
+        return JobResult::Ok {
+            removed: 0,
+            changed: false,
+        };
     };
     let source = match std::fs::read_to_string(path) {
         Ok(s) => s,
@@ -295,6 +311,7 @@ fn process_one(path: &Path, ranges: &[(usize, usize)], s: &Settings) -> JobResul
 
     match strip(&source, lang, &opts) {
         Ok(outcome) => {
+            let mut changed = false;
             if outcome.removed > 0 {
                 if s.check {
                     println!("{}: {} comment(s)", path.display(), outcome.removed);
@@ -313,6 +330,7 @@ fn process_one(path: &Path, ranges: &[(usize, usize)], s: &Settings) -> JobResul
                             msg: e.to_string(),
                         };
                     }
+                    changed = true;
                     if s.verbose {
                         eprintln!("  {} (-{} comments)", path.display(), outcome.removed);
                     }
@@ -320,6 +338,7 @@ fn process_one(path: &Path, ranges: &[(usize, usize)], s: &Settings) -> JobResul
             }
             JobResult::Ok {
                 removed: outcome.removed,
+                changed,
             }
         }
         Err(e) => JobResult::Err {

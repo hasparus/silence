@@ -31,6 +31,14 @@ impl Repo {
         );
     }
 
+    fn git_output(&self, args: &[&str]) -> Output {
+        Command::new("git")
+            .args(args)
+            .current_dir(&self.dir)
+            .output()
+            .expect("git must be installed to run these tests")
+    }
+
     fn write(&self, name: &str, contents: &str) {
         std::fs::write(self.dir.join(name), contents).unwrap();
     }
@@ -92,22 +100,37 @@ fn staged_mode_strips_a_cleanly_staged_file() {
 
     assert!(out.status.success());
     assert_eq!(repo.read("b.rs"), "fn b() {}\nlet x = 1;\n");
+    let cached =
+        String::from_utf8_lossy(&repo.git_output(&["diff", "--cached", "--", "b.rs"]).stdout)
+            .into_owned();
+    assert!(cached.contains("+let x = 1;"));
+    assert!(!cached.contains("remove me"));
+    assert!(
+        repo.git_output(&["diff", "--", "b.rs"]).stdout.is_empty(),
+        "--staged should restage stripped worktree changes"
+    );
 }
 
 #[test]
 fn changes_mode_widens_a_file_that_is_staged_and_modified() {
     let repo = Repo::new("changes-conflicted");
-    repo.commit_baseline("c.rs", "fn c() {}\n");
+    repo.commit_baseline("c.rs", "fn c() {}\n// committed comment, must survive\n");
 
-    repo.write("c.rs", "fn c() {}\nlet s = 1; // staged\n");
+    repo.write(
+        "c.rs",
+        "fn c() {}\n// committed comment, must survive\nlet s = 1; // staged\n",
+    );
     repo.git(&["add", "c.rs"]);
     repo.write(
         "c.rs",
-        "fn c() {}\nlet s = 1; // staged\nlet w = 2; // working\n",
+        "fn c() {}\n// committed comment, must survive\nlet s = 1; // staged\nlet w = 2; // working\n",
     );
 
     let out = repo.silence(&["--changes"]);
 
     assert!(out.status.success());
-    assert_eq!(repo.read("c.rs"), "fn c() {}\nlet s = 1;\nlet w = 2;\n");
+    assert_eq!(
+        repo.read("c.rs"),
+        "fn c() {}\n// committed comment, must survive\nlet s = 1;\nlet w = 2;\n"
+    );
 }

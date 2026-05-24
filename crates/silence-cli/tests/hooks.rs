@@ -177,7 +177,7 @@ fn hook_reads_file_path_from_stdin_json() {
 }
 
 #[test]
-fn install_hook_uses_codex_root_shape_not_claude_shape() {
+fn install_hook_uses_codex_hooks_wrapper_shape() {
     let home = tmp("codex-shape-home");
     let cwd = tmp("codex-shape-cwd");
 
@@ -193,18 +193,155 @@ fn install_hook_uses_codex_root_shape_not_claude_shape() {
             .unwrap();
 
     assert!(
-        codex_hooks.get("PostToolUse").is_some(),
-        "codex hooks.json must have PostToolUse at the root, got: {codex_hooks}"
+        codex_hooks.get("hooks").is_some(),
+        "codex hooks.json must wrap hooks under a `hooks` key, got: {codex_hooks}"
     );
     assert!(
-        codex_hooks.get("hooks").is_none(),
-        "codex hooks.json must NOT wrap in a `hooks` key (that's Claude's shape)"
+        codex_hooks.get("PostToolUse").is_none(),
+        "codex hooks.json must not keep legacy root PostToolUse, got: {codex_hooks}"
     );
-    let entries = codex_hooks["PostToolUse"].as_array().unwrap();
+    let entries = codex_hooks["hooks"]["PostToolUse"].as_array().unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["matcher"].as_str(), Some("apply_patch"));
     let command = entries[0]["hooks"][0]["command"].as_str().unwrap();
     assert!(command.contains("silence") && command.contains("--hook"));
+    assert_eq!(
+        entries[0]["hooks"][0]["statusMessage"].as_str(),
+        Some("Trimming comments")
+    );
+}
+
+#[test]
+fn install_hook_to_codex_only_does_not_touch_other_agents() {
+    let home = tmp("codex-only-home");
+    let cwd = tmp("codex-only-cwd");
+
+    let out = run(
+        &cwd,
+        &["--install-hook", "--to", "codex"],
+        &[("HOME", &home)],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(home.join(".codex/hooks.json").exists());
+    assert!(!home.join(".claude/settings.json").exists());
+    assert!(!home.join(".config/opencode/plugins/silence.js").exists());
+    assert!(!home.join(".pi/agent/extensions/silence.ts").exists());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Codex"));
+    assert!(!stdout.contains("Claude Code"));
+    assert!(!stdout.contains("Opencode"));
+    assert!(!stdout.contains("Pi"));
+}
+
+#[test]
+fn install_hook_accepts_multiple_to_flags() {
+    let home = tmp("multi-to-home");
+    let cwd = tmp("multi-to-cwd");
+
+    let out = run(
+        &cwd,
+        &["--install-hook", "--to", "codex", "--to", "claude"],
+        &[("HOME", &home)],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(home.join(".codex/hooks.json").exists());
+    assert!(home.join(".claude/settings.json").exists());
+    assert!(!home.join(".config/opencode/plugins/silence.js").exists());
+    assert!(!home.join(".pi/agent/extensions/silence.ts").exists());
+}
+
+#[test]
+fn install_hook_migrates_legacy_codex_root_shape() {
+    let home = tmp("codex-legacy-home");
+    let cwd = tmp("codex-legacy-cwd");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    std::fs::write(
+        home.join(".codex/hooks.json"),
+        r#"{
+  "PostToolUse": [
+    {
+      "matcher": "apply_patch",
+      "hooks": [
+        { "type": "command", "command": "/old/silence --hook" }
+      ]
+    }
+  ]
+}"#,
+    )
+    .unwrap();
+
+    let out = run(
+        &cwd,
+        &["--install-hook", "--to", "codex"],
+        &[("HOME", &home)],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let codex_hooks: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(home.join(".codex/hooks.json")).unwrap())
+            .unwrap();
+    assert!(codex_hooks.get("PostToolUse").is_none());
+    let entries = codex_hooks["hooks"]["PostToolUse"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    let command = entries[0]["hooks"][0]["command"].as_str().unwrap();
+    assert!(command.contains("silence") && command.contains("--hook"));
+}
+
+#[test]
+fn install_hook_updates_existing_codex_entry_with_status_message() {
+    let home = tmp("codex-update-home");
+    let cwd = tmp("codex-update-cwd");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    std::fs::write(
+        home.join(".codex/hooks.json"),
+        r#"{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          { "type": "command", "command": "/old/silence --hook" }
+        ]
+      }
+    ]
+  }
+}"#,
+    )
+    .unwrap();
+
+    let out = run(
+        &cwd,
+        &["--install-hook", "--to", "codex"],
+        &[("HOME", &home)],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let codex_hooks: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(home.join(".codex/hooks.json")).unwrap())
+            .unwrap();
+    let hook = &codex_hooks["hooks"]["PostToolUse"][0]["hooks"][0];
+    assert_eq!(hook["statusMessage"].as_str(), Some("Trimming comments"));
+    assert_ne!(hook["command"].as_str(), Some("/old/silence --hook"));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("updated"));
 }
 
 #[test]
@@ -304,5 +441,45 @@ fn hook_extracts_path_from_codex_apply_patch_payload() {
         std::fs::read_to_string(repo.join("a.rs")).unwrap(),
         "fn a() {}\nfn b() {}\n",
         "hook must find the file path inside the patch text and strip the slop"
+    );
+}
+
+#[test]
+fn hook_in_mixed_staged_file_does_not_strip_committed_comments() {
+    let repo = tmp("hook-mixed-staged");
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["config", "user.email", "t@t"]);
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(
+        repo.join("a.rs"),
+        "fn a() {}\n// committed comment, must survive\n",
+    )
+    .unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "baseline", "--no-gpg-sign"]);
+
+    std::fs::write(
+        repo.join("a.rs"),
+        "fn a() {}\n// committed comment, must survive\nfn staged() {} // staged\n",
+    )
+    .unwrap();
+    git(&repo, &["add", "a.rs"]);
+    std::fs::write(
+        repo.join("a.rs"),
+        "fn a() {}\n// committed comment, must survive\nfn staged() {} // staged\nfn working() {} // working\n",
+    )
+    .unwrap();
+
+    let out = run(&repo, &["--hook", "a.rs"], &[]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.rs")).unwrap(),
+        "fn a() {}\n// committed comment, must survive\nfn staged() {}\nfn working() {}\n"
     );
 }

@@ -55,28 +55,38 @@ pub fn changes(scope: Scope) -> Result<GitChanges> {
         }
         Scope::All => {
             let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
-            let staged = repo
-                .diff_tree_to_index(head_tree.as_ref(), None, Some(&mut diff_opts()))
-                .context("failed to diff staged changes")?;
-            let unstaged = repo
-                .diff_index_to_workdir(None, Some(&mut diff_opts()))
-                .context("failed to diff unstaged changes")?;
-            let conflicted: HashSet<PathBuf> = diff_paths(&staged)
-                .intersection(&diff_paths(&unstaged))
-                .cloned()
-                .collect();
-            collect_hunks(&staged, &mut files)?;
-            collect_hunks(&unstaged, &mut files)?;
+            let all = repo
+                .diff_tree_to_workdir(head_tree.as_ref(), Some(&mut diff_opts()))
+                .context("failed to diff uncommitted changes")?;
+            collect_hunks(&all, &mut files)?;
             collect_untracked(&repo, &mut files)?;
-            for path in conflicted {
-                if let Some(ranges) = files.get_mut(&path) {
-                    ranges.clear();
-                }
-            }
         }
     }
 
     Ok(GitChanges { root, files })
+}
+
+pub fn stage_paths(paths: &[PathBuf]) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    let repo = Repository::discover(".").context("not inside a git repository")?;
+    let root = repo
+        .workdir()
+        .context("bare repositories are not supported")?;
+    let mut index = repo.index().context("failed to open git index")?;
+
+    for path in paths {
+        let rel = path
+            .strip_prefix(root)
+            .with_context(|| format!("{} is outside git workdir", path.display()))?;
+        index
+            .add_path(rel)
+            .with_context(|| format!("failed to stage {}", rel.display()))?;
+    }
+    index.write().context("failed to write git index")?;
+    Ok(())
 }
 
 fn diff_opts() -> DiffOptions {

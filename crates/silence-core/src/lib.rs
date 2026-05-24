@@ -363,6 +363,16 @@ mod tests {
     }
 
     #[test]
+    fn default_preserves_doc_comments() {
+        let src = "/// Public docs.\nfunction a() {}\n/** JSDoc. */\nconst x = 1; // strip\n";
+        let out = strip_default(src, Lang::JavaScript);
+        assert_eq!(
+            out,
+            "/// Public docs.\nfunction a() {}\n/** JSDoc. */\nconst x = 1;\n"
+        );
+    }
+
+    #[test]
     fn line_ranges_limit_scope() {
         let src = "// keep\nlet x = 1;\nlet y = 2; // go\n";
         let opts = Options {

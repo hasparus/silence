@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use clap::ValueEnum;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -6,6 +7,15 @@ use std::path::{Path, PathBuf};
 pub enum Scope {
     User,
     Project,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
+pub enum Agent {
+    #[value(alias = "claude-code")]
+    Claude,
+    Codex,
+    Opencode,
+    Pi,
 }
 
 #[derive(Clone, Copy)]
@@ -22,48 +32,60 @@ struct Report {
     note: Option<&'static str>,
 }
 
-pub fn install(scope: Scope) -> Result<()> {
+pub fn install(scope: Scope, agents: &[Agent]) -> Result<()> {
     let bin = silence_bin();
     let command = silence_command(&bin);
-    run(scope, &bin, Op::Install { command: &command }, "installing")
+    run(
+        scope,
+        &bin,
+        Op::Install { command: &command },
+        "installing",
+        agents,
+    )
 }
 
-pub fn uninstall(scope: Scope) -> Result<()> {
+pub fn uninstall(scope: Scope, agents: &[Agent]) -> Result<()> {
     let bin = silence_bin();
-    run(scope, &bin, Op::Uninstall, "removing")
+    run(scope, &bin, Op::Uninstall, "removing", agents)
 }
 
-pub fn status(scope: Scope) -> Result<()> {
+pub fn status(scope: Scope, agents: &[Agent]) -> Result<()> {
     let bin = silence_bin();
-    run(scope, &bin, Op::Status, "status of")
+    run(scope, &bin, Op::Status, "status of", agents)
 }
 
 #[allow(clippy::unnecessary_wraps)]
-fn run(scope: Scope, bin: &str, op: Op, verb: &str) -> Result<()> {
+fn run(scope: Scope, bin: &str, op: Op, verb: &str, agents: &[Agent]) -> Result<()> {
     println!(
         "{verb} silence post-edit hooks ({} scope)",
         scope_label(scope)
     );
-    let reports = [
-        json_agent(
-            "Claude Code",
-            claude_path(scope),
-            "Write|Edit",
-            JsonShape::WrappedInHooks,
-            op,
-            None,
-        ),
-        json_agent(
-            "Codex",
-            codex_path(scope),
-            "apply_patch",
-            JsonShape::PostToolUseAtRoot,
-            op,
-            Some("run /hooks in codex to trust"),
-        ),
-        file_agent("Opencode", opencode_path(scope), &opencode_plugin(bin), op),
-        file_agent("Pi", pi_path(scope), &pi_extension(bin), op),
-    ];
+    let selected = selected_agents(agents);
+    let mut reports = Vec::with_capacity(selected.len());
+    for agent in selected {
+        match agent {
+            Agent::Claude => reports.push(json_agent(
+                "Claude Code",
+                claude_path(scope),
+                "Write|Edit",
+                op,
+                None,
+            )),
+            Agent::Codex => reports.push(codex_agent(
+                codex_path(scope),
+                "apply_patch",
+                op,
+                Some("run /hooks in codex to trust"),
+            )),
+            Agent::Opencode => reports.push(file_agent(
+                "Opencode",
+                opencode_path(scope),
+                &opencode_plugin(bin),
+                op,
+            )),
+            Agent::Pi => reports.push(file_agent("Pi", pi_path(scope), &pi_extension(bin), op)),
+        }
+    }
     let mut any_note = false;
     for r in &reports {
         println!(
@@ -87,24 +109,31 @@ fn run(scope: Scope, bin: &str, op: Op, verb: &str) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-enum JsonShape {
-    WrappedInHooks,
-    PostToolUseAtRoot,
+fn selected_agents(agents: &[Agent]) -> Vec<Agent> {
+    if agents.is_empty() {
+        vec![Agent::Claude, Agent::Codex, Agent::Opencode, Agent::Pi]
+    } else {
+        let mut selected = Vec::with_capacity(agents.len());
+        for agent in agents {
+            if !selected.contains(agent) {
+                selected.push(*agent);
+            }
+        }
+        selected
+    }
 }
 
 fn json_agent(
     agent: &'static str,
     path: PathBuf,
     matcher: &str,
-    shape: JsonShape,
     op: Op,
     note: Option<&'static str>,
 ) -> Report {
     let result: Result<&'static str> = (|| match op {
         Op::Install { command } => {
             let mut root = read_json(&path)?;
-            let arr = post_tool_use(&mut root, shape)?;
+            let arr = post_tool_use(&mut root)?;
             if arr.iter().any(is_silence_entry) {
                 return Ok("already installed");
             }
@@ -120,7 +149,7 @@ fn json_agent(
                 return Ok("not set");
             }
             let mut root = read_json(&path)?;
-            let arr = post_tool_use(&mut root, shape)?;
+            let arr = post_tool_use(&mut root)?;
             let before = arr.len();
             arr.retain(|e| !is_silence_entry(e));
             if arr.len() == before {
@@ -134,13 +163,117 @@ fn json_agent(
                 return Ok("not set");
             }
             let mut root = read_json(&path)?;
-            let active = post_tool_use(&mut root, shape)?
-                .iter()
-                .any(is_silence_entry);
+            let active = post_tool_use(&mut root)?.iter().any(is_silence_entry);
             Ok(if active { "active" } else { "not set" })
         }
     })();
     report(agent, path, result, note)
+}
+
+fn codex_agent(path: PathBuf, matcher: &str, op: Op, note: Option<&'static str>) -> Report {
+    let result: Result<&'static str> = (|| match op {
+        Op::Install { command } => {
+            let mut root = read_json(&path)?;
+            remove_legacy_codex_silence_entry(&mut root)?;
+            let arr = post_tool_use(&mut root)?;
+            if update_codex_silence_entry(arr, matcher, command) {
+                write_json(&path, &root)?;
+                return Ok("updated");
+            }
+            if arr.iter().any(is_silence_entry) {
+                return Ok("already installed");
+            }
+            arr.push(json!({
+                "matcher": matcher,
+                "hooks": [{
+                    "type": "command",
+                    "command": command,
+                    "statusMessage": "Trimming comments",
+                }],
+            }));
+            write_json(&path, &root)?;
+            Ok("installed")
+        }
+        Op::Uninstall => {
+            if !path.exists() {
+                return Ok("not set");
+            }
+            let mut root = read_json(&path)?;
+            let mut changed = remove_legacy_codex_silence_entry(&mut root)?;
+            let arr = post_tool_use(&mut root)?;
+            let before = arr.len();
+            arr.retain(|e| !is_silence_entry(e));
+            changed |= arr.len() != before;
+            if !changed {
+                return Ok("not set");
+            }
+            write_json(&path, &root)?;
+            Ok("removed")
+        }
+        Op::Status => {
+            if !path.exists() {
+                return Ok("not set");
+            }
+            let mut root = read_json(&path)?;
+            let active = post_tool_use(&mut root)?.iter().any(is_silence_entry);
+            Ok(if active { "active" } else { "not set" })
+        }
+    })();
+    report("Codex", path, result, note)
+}
+
+fn update_codex_silence_entry(arr: &mut [Value], matcher: &str, command: &str) -> bool {
+    let Some(entry) = arr.iter_mut().find(|entry| is_silence_entry(entry)) else {
+        return false;
+    };
+    let mut changed = false;
+    if entry.get("matcher").and_then(Value::as_str) != Some(matcher) {
+        entry["matcher"] = json!(matcher);
+        changed = true;
+    }
+    if let Some(hooks) = entry.get_mut("hooks").and_then(Value::as_array_mut) {
+        for hook in hooks {
+            let Some(existing) = hook.get("command").and_then(Value::as_str) else {
+                continue;
+            };
+            if !(existing.contains("--hook") && existing.contains("silence")) {
+                continue;
+            }
+            let command_changed = existing != command;
+            if hook.get("type").and_then(Value::as_str) != Some("command") {
+                hook["type"] = json!("command");
+                changed = true;
+            }
+            if command_changed {
+                hook["command"] = json!(command);
+                changed = true;
+            }
+            if hook.get("statusMessage").and_then(Value::as_str) != Some("Trimming comments") {
+                hook["statusMessage"] = json!("Trimming comments");
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+fn remove_legacy_codex_silence_entry(root: &mut Value) -> Result<bool> {
+    let obj = root
+        .as_object_mut()
+        .context("config root is not a JSON object")?;
+    let Some(post) = obj.get_mut("PostToolUse") else {
+        return Ok(false);
+    };
+    let arr = post
+        .as_array_mut()
+        .context("\"PostToolUse\" is not a JSON array")?;
+    let before = arr.len();
+    arr.retain(|e| !is_silence_entry(e));
+    let changed = arr.len() != before;
+    if arr.is_empty() {
+        obj.remove("PostToolUse");
+    }
+    Ok(changed)
 }
 
 fn read_json(path: &Path) -> Result<Value> {
@@ -164,19 +297,14 @@ fn write_json(path: &Path, root: &Value) -> Result<()> {
     Ok(())
 }
 
-fn post_tool_use(root: &mut Value, shape: JsonShape) -> Result<&mut Vec<Value>> {
+fn post_tool_use(root: &mut Value) -> Result<&mut Vec<Value>> {
     let obj = root
         .as_object_mut()
         .context("config root is not a JSON object")?;
-    let host = match shape {
-        JsonShape::PostToolUseAtRoot => obj,
-        JsonShape::WrappedInHooks => {
-            let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
-            hooks
-                .as_object_mut()
-                .context("\"hooks\" is not a JSON object")?
-        }
-    };
+    let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
+    let host = hooks
+        .as_object_mut()
+        .context("\"hooks\" is not a JSON object")?;
     let post = host.entry("PostToolUse").or_insert_with(|| json!([]));
     post.as_array_mut()
         .context("\"PostToolUse\" is not a JSON array")
@@ -295,11 +423,19 @@ fn silence_bin() -> String {
 }
 
 fn silence_command(bin: &str) -> String {
-    if bin.contains(char::is_whitespace) {
-        format!("\"{bin}\" --hook")
-    } else {
-        format!("{bin} --hook")
+    format!("{} --hook", shell_quote(bin))
+}
+
+fn shell_quote(s: &str) -> String {
+    if s.is_empty() {
+        return "''".into();
     }
+    if s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-' | b':'))
+    {
+        return s.into();
+    }
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn js_string(s: &str) -> String {
@@ -348,4 +484,25 @@ export default function (pi: any) {{
 "#,
         bin = js_string(bin)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn silence_command_is_shell_safe() {
+        assert_eq!(
+            silence_command("/usr/local/bin/silence"),
+            "/usr/local/bin/silence --hook"
+        );
+        assert_eq!(
+            silence_command("/tmp/Codex Apps/silence"),
+            "'/tmp/Codex Apps/silence' --hook"
+        );
+        assert_eq!(
+            silence_command("/tmp/$postId's/silence"),
+            "'/tmp/$postId'\\''s/silence' --hook"
+        );
+    }
 }
