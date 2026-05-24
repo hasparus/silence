@@ -84,6 +84,12 @@ pub struct Outcome {
     pub preserved: usize,
 }
 
+/// Find comment nodes in `source` using the tree-sitter grammar for `lang`.
+///
+/// # Errors
+///
+/// Returns an error if the parser cannot load the language, parse the source,
+/// or compile the language-specific comment query.
 pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
     let grammar = lang.grammar();
     let mut parser = Parser::new();
@@ -154,6 +160,11 @@ fn in_ranges(comment: &Comment, ranges: &[(usize, usize)]) -> bool {
         .any(|&(s, e)| comment.start_row <= e && comment.end_row >= s)
 }
 
+/// Strip removable comments from `source` according to `opts`.
+///
+/// # Errors
+///
+/// Returns an error when comment discovery fails for the selected language.
 pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error> {
     let comments = find_comments(source, lang)?;
 

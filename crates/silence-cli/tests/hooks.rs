@@ -151,7 +151,7 @@ fn hook_reads_file_path_from_stdin_json() {
 
     let path = repo.join("a.rs");
     let payload = format!(
-        "{{\"tool_name\":\"Edit\",\"tool_input\":{{\"file_path\":{}}}}}",
+        "{{\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Edit\",\"tool_input\":{{\"file_path\":{}}}}}",
         serde_json::to_string(&path.to_string_lossy().to_string()).unwrap()
     );
     let mut child = Command::new(silence_bin())
@@ -173,6 +173,31 @@ fn hook_reads_file_path_from_stdin_json() {
     assert_eq!(
         std::fs::read_to_string(repo.join("a.rs")).unwrap(),
         "fn a() {}\nfn b() {}\n"
+    );
+}
+
+#[test]
+fn install_hook_uses_claude_write_edit_and_multiedit_matcher() {
+    let home = tmp("claude-matcher-home");
+    let cwd = tmp("claude-matcher-cwd");
+
+    let out = run(
+        &cwd,
+        &["--install-hook", "--to", "claude"],
+        &[("HOME", &home)],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(home.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        settings["hooks"]["PostToolUse"][0]["matcher"].as_str(),
+        Some("Write|Edit|MultiEdit")
     );
 }
 
@@ -385,6 +410,14 @@ fn generated_plugin_and_extension_have_verified_field_names() {
         opencode_plugin.contains("args.filePath"),
         "opencode write/edit tools use `filePath` — that's what the plugin must read"
     );
+    assert!(
+        opencode_plugin.contains("apply_patch") && opencode_plugin.contains("args.patchText"),
+        "opencode apply_patch uses `patchText` — plugin must forward it to --hook stdin"
+    );
+    assert!(
+        opencode_plugin.contains("execFile(BIN"),
+        "opencode plugin should execute without shell expansion"
+    );
     assert!(opencode_plugin.contains("--hook"));
 
     let pi_extension =
@@ -398,6 +431,48 @@ fn generated_plugin_and_extension_have_verified_field_names() {
         "pi's edit/write tools use `path` (not file_path)"
     );
     assert!(pi_extension.contains("--hook"));
+}
+
+#[test]
+fn hook_extracts_path_from_opencode_patch_text_payload() {
+    let repo = tmp("hook-opencode-patch-text");
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["config", "user.email", "t@t"]);
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(repo.join("a.rs"), "fn a() {}\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "baseline", "--no-gpg-sign"]);
+
+    std::fs::write(repo.join("a.rs"), "fn a() {}\nfn b() {} // slop\n").unwrap();
+
+    let payload = r#"{
+      "tool": "apply_patch",
+      "args": {
+        "patchText": "*** Begin Patch\n*** Update File: a.rs\n@@\n fn a() {}\n+fn b() {} // slop\n*** End Patch\n"
+      }
+    }"#;
+
+    let mut child = Command::new(silence_bin())
+        .args(["--hook"])
+        .current_dir(&repo)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(payload.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.rs")).unwrap(),
+        "fn a() {}\nfn b() {}\n"
+    );
 }
 
 #[test]

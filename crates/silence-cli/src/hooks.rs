@@ -67,7 +67,7 @@ fn run(scope: Scope, bin: &str, op: Op, verb: &str, agents: &[Agent]) -> Result<
             Agent::Claude => reports.push(json_agent(
                 "Claude Code",
                 claude_path(scope),
-                "Write|Edit",
+                "Write|Edit|MultiEdit",
                 op,
                 None,
             )),
@@ -447,15 +447,29 @@ fn opencode_plugin(bin: &str) -> String {
         r#"// silence post-edit hook — installed by `silence --install-hook`.
 // Strips agent-written comments. Delete this file (or run
 // `silence --uninstall-hook`) to remove it.
+import {{ execFile }} from "node:child_process";
+
 const BIN = {bin};
 
-export const SilencePlugin = async ({{ $ }}) => ({{
+function runSilence(args, input) {{
+  return new Promise((resolve) => {{
+  const child = execFile(BIN, args, () => resolve());
+  if (input) child.stdin && child.stdin.end(input);
+  }});
+}}
+
+export const SilencePlugin = async () => ({{
   "tool.execute.after": async (input, output) => {{
     const tool = input && input.tool;
-    if (tool !== "write" && tool !== "edit") return;
+    if (tool !== "write" && tool !== "edit" && tool !== "apply_patch") return;
     const args = (output && output.args) || (input && input.args) || {{}};
     const file = args.filePath;
-    if (file) await $`${{BIN}} --hook ${{file}}`.quiet().nothrow();
+    if (file) {{
+      await runSilence(["--hook", String(file)]);
+      return;
+    }}
+    const patchText = args.patchText;
+    if (patchText) await runSilence(["--hook"], JSON.stringify({{ patchText }}));
   }},
 }});
 "#,

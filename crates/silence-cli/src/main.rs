@@ -470,7 +470,7 @@ fn collect_json_paths(v: &serde_json::Value, out: &mut Vec<PathBuf>) {
                         "file_path" | "filePath" | "path" | "filename" | "file" => {
                             out.push(PathBuf::from(s));
                         }
-                        "patch" | "diff" | "input" => collect_patch_paths(s, out),
+                        "patch" | "patchText" | "diff" | "input" => collect_patch_paths(s, out),
                         _ => {}
                     }
                 }
