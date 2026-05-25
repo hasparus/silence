@@ -2,10 +2,7 @@
 
 # silence
 
-Removes (or warns about) comments in an agent post-write hook. Preserves
-doc/directive comments and `TODO`/`FIXME`/`HACK` by default. Tree-sitter
-based, so it doesn't get confused by `//` inside strings. Works with Claude
-Code, Codex, Opencode, and Pi.
+Strips comments in an agent post-write hook. Preserves doc comments and directives by default (e.g. JSDoc, `eslint-disable-next-line`, `@ts-check`, `noqa:`, `TODO`, `FIXME`, ` HACK`). Works with Claude Code, Codex, Opencode, and Pi.
 
 ## install
 
