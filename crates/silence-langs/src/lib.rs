@@ -54,6 +54,7 @@ impl Lang {
 
     #[must_use]
     pub fn comment_query(self) -> &'static str {
+        // NOTE: Rust has line_comment/block_comment nodes; other grammars use one `comment` node + text heuristic.
         match self {
             Lang::Rust => "(line_comment) @line (block_comment) @block",
             Lang::TypeScript
