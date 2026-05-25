@@ -557,7 +557,7 @@ USAGE
   silence --staged            strip comments inside staged git hunks
   silence --changes           strip comments inside all uncommitted changes
 
-KEEP RULES
+CONFIG
   Ordinary comments are removed. Kept by default: TODO/FIXME/HACK/XXX/SAFETY,
   common lint directives, and directive-shaped comments (@ts-ignore,
   //go:embed, /// <reference/>). Add more in .silence.toml.

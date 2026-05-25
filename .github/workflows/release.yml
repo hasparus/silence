@@ -32,3 +32,66 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.asset }}
+
+  publish-crates:
+    name: crates.io
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Publish workspace crates
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          test -n "${CARGO_REGISTRY_TOKEN:-}" || {
+            echo "CARGO_REGISTRY_TOKEN secret is required"
+            exit 1
+          }
+
+          version="${GITHUB_REF_NAME#v}"
+          workspace_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          test "$version" = "$workspace_version" || {
+            echo "tag version $version does not match workspace version $workspace_version"
+            exit 1
+          }
+
+          crate_published() {
+            curl -fsSL "https://crates.io/api/v1/crates/$1/$2" >/dev/null 2>&1
+          }
+
+          wait_for_crate() {
+            local crate="$1"
+            for _ in {1..30}; do
+              if cargo search "$crate" --limit 1 | grep -F "${crate} = \"${version}\"" >/dev/null; then
+                return 0
+              fi
+              sleep 10
+            done
+            echo "$crate $version did not appear in the crates.io index in time"
+            return 1
+          }
+
+          publish_crate() {
+            local package="$1"
+            local crate="$2"
+            if crate_published "$crate" "$version"; then
+              echo "$crate $version is already published"
+              return 0
+            fi
+            cargo publish -p "$package" --locked
+            wait_for_crate "$crate"
+          }
+
+          publish_crate silence-strip-langs silence-strip-langs
+          publish_crate silence-strip-core silence-strip-core
+          publish_crate silence-cli silence-cli
