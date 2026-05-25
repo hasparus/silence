@@ -4,21 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Language/grammar registry for `silence` — the tree-sitter-based comment stripper. Rust, TypeScript, JavaScript, JSX/TSX, Python, Go."
+description = "Language/grammar registry for `silence` — TypeScript/JavaScript, Python built-in; Rust, Go, C/C++, TOML on demand."
 keywords = ["tree-sitter", "comments", "parser", "grammar"]
 categories = ["parser-implementations", "development-tools"]
 
 [lib]
 name = "silence_langs"
 path = "src/lib.rs"
-
-[dependencies]
-tree-sitter.workspace = true
-tree-sitter-rust.workspace = true
-tree-sitter-python.workspace = true
-tree-sitter-go.workspace = true
-tree-sitter-typescript.workspace = true
-tree-sitter-toml-ng.workspace = true
 
 [lints]
 workspace = true

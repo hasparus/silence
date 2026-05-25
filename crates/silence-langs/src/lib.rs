@@ -1,6 +1,4 @@
-use tree_sitter::Language;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lang {
     Rust,
     TypeScript,
@@ -9,6 +7,7 @@ pub enum Lang {
     Python,
     Go,
     Toml,
+    Cpp,
 }
 
 impl Lang {
@@ -23,8 +22,43 @@ impl Lang {
             "py" | "pyi" => Lang::Python,
             "go" => Lang::Go,
             "toml" => Lang::Toml,
+            "c" | "h" | "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Lang::Cpp,
             _ => return None,
         })
+    }
+
+    #[must_use]
+    pub fn is_builtin(self) -> bool {
+        matches!(
+            self,
+            Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python
+        )
+    }
+
+    #[must_use]
+    pub fn grammar_pack_id(self) -> &'static str {
+        match self {
+            Lang::Rust => "rust",
+            Lang::Go => "go",
+            Lang::Toml => "toml",
+            Lang::Cpp => "cpp",
+            Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python => {
+                panic!("built-in language has no grammar pack id")
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn grammar_symbol(self) -> &'static str {
+        match self {
+            Lang::Rust => "tree_sitter_rust",
+            Lang::Go => "tree_sitter_go",
+            Lang::Toml => "tree_sitter_toml",
+            Lang::Cpp => "tree_sitter_cpp",
+            Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python => {
+                panic!("built-in language has no dylib symbol")
+            }
+        }
     }
 
     #[must_use]
@@ -37,24 +71,12 @@ impl Lang {
             Lang::Python => "Python",
             Lang::Go => "Go",
             Lang::Toml => "TOML",
-        }
-    }
-
-    #[must_use]
-    pub fn grammar(self) -> Language {
-        match self {
-            Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
-            Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-            Lang::Tsx | Lang::JavaScript => tree_sitter_typescript::LANGUAGE_TSX.into(),
-            Lang::Python => tree_sitter_python::LANGUAGE.into(),
-            Lang::Go => tree_sitter_go::LANGUAGE.into(),
-            Lang::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
+            Lang::Cpp => "C/C++",
         }
     }
 
     #[must_use]
     pub fn comment_query(self) -> &'static str {
-        // NOTE: Rust has line_comment/block_comment nodes; other grammars use one `comment` node + text heuristic.
         match self {
             Lang::Rust => "(line_comment) @line (block_comment) @block",
             Lang::TypeScript
@@ -62,7 +84,8 @@ impl Lang {
             | Lang::JavaScript
             | Lang::Python
             | Lang::Go
-            | Lang::Toml => "(comment) @comment",
+            | Lang::Toml
+            | Lang::Cpp => "(comment) @comment",
         }
     }
 
@@ -75,7 +98,8 @@ impl Lang {
             | Lang::JavaScript
             | Lang::Python
             | Lang::Go
-            | Lang::Toml => &["comment"],
+            | Lang::Toml
+            | Lang::Cpp => &["comment"],
         }
     }
 }
@@ -88,6 +112,7 @@ pub const ALL: &[Lang] = &[
     Lang::Python,
     Lang::Go,
     Lang::Toml,
+    Lang::Cpp,
 ];
 
 #[cfg(test)]
@@ -100,22 +125,17 @@ mod tests {
         assert_eq!(Lang::from_extension("RS"), Some(Lang::Rust));
         assert_eq!(Lang::from_extension("tsx"), Some(Lang::Tsx));
         assert_eq!(Lang::from_extension("py"), Some(Lang::Python));
+        assert_eq!(Lang::from_extension("ts"), Some(Lang::TypeScript));
+        assert_eq!(Lang::from_extension("c"), Some(Lang::Cpp));
+        assert_eq!(Lang::from_extension("cpp"), Some(Lang::Cpp));
         assert_eq!(Lang::from_extension("unknown"), None);
     }
 
     #[test]
-    fn every_grammar_loads_and_query_compiles() {
-        for &lang in ALL {
-            let grammar = lang.grammar();
-            let query = tree_sitter::Query::new(&grammar, lang.comment_query())
-                .unwrap_or_else(|e| panic!("query failed for {}: {e:?}", lang.name()));
-            for name in lang.comment_capture_names() {
-                assert!(
-                    query.capture_names().contains(name),
-                    "{} query must define @{name}",
-                    lang.name()
-                );
-            }
-        }
+    fn builtin_vs_optional() {
+        assert!(Lang::Python.is_builtin());
+        assert!(Lang::TypeScript.is_builtin());
+        assert!(!Lang::Rust.is_builtin());
+        assert!(!Lang::Cpp.is_builtin());
     }
 }

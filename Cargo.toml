@@ -3,7 +3,9 @@ resolver = "2"
 members = [
     "crates/silence-core",
     "crates/silence-langs",
+    "crates/silence-grammars",
     "crates/silence-cli",
+    "crates/silence-grammar-packs",
 ]
 
 [workspace.package]
@@ -27,6 +29,7 @@ tree-sitter-python = "0.25"
 tree-sitter-go = "0.25"
 tree-sitter-typescript = "0.23"
 tree-sitter-toml-ng = "0.7"
+tree-sitter-cpp = "0.23"
 
 clap = { version = "4.6", features = ["derive"] }
 ignore = "0.4"
@@ -41,6 +44,7 @@ thiserror = "2"
 
 silence-strip-core = { path = "crates/silence-core", version = "0.1.1" }
 silence-strip-langs = { path = "crates/silence-langs", version = "0.1.1" }
+silence-strip-grammars = { path = "crates/silence-grammars", version = "0.1.1", default-features = false }
 
 [profile.release]
 lto = "thin"

@@ -1,0 +1,40 @@
+[package]
+name = "silence-strip-grammars"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Built-in and on-demand tree-sitter grammars for silence"
+keywords = ["tree-sitter", "grammar"]
+categories = ["parser-implementations"]
+
+[lib]
+name = "silence_grammars"
+path = "src/lib.rs"
+
+[features]
+default = ["embed-optional"]
+embed-optional = [
+    "dep:tree-sitter-cpp",
+    "dep:tree-sitter-rust",
+    "dep:tree-sitter-go",
+    "dep:tree-sitter-toml-ng",
+]
+
+[dependencies]
+silence-strip-langs.workspace = true
+tree-sitter.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-cpp = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-toml-ng = { workspace = true, optional = true }
+libloading = "0.8"
+thiserror.workspace = true
+ureq = { version = "3", default-features = true, features = ["rustls"] }
+
+[lints]
+rust.unsafe_code = "allow"
+clippy.all = { level = "deny", priority = -1 }
+clippy.pedantic = { level = "warn", priority = -1 }

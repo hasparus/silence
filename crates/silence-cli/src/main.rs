@@ -277,7 +277,8 @@ KEEP RULES
   //go:embed, /// <reference/>). Add more in .silence.toml.
 
 LANGUAGES
-  Rust, TypeScript, JavaScript, JSX/TSX, Python, Go, TOML.
+  Built-in: TypeScript/JavaScript and Python.
+  On first use: Rust, Go, TOML, C/C++, and future packs (auto-downloaded).
   Respects .gitignore and .silenceignore.
 
 AGENT GUIDANCE

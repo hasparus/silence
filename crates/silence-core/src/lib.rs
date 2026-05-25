@@ -85,7 +85,7 @@ pub struct Outcome {
 }
 
 pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
-    let grammar = lang.grammar();
+    let grammar = silence_grammars::ensure(lang).map_err(|e| Error::Language(e.to_string()))?;
     let mut parser = Parser::new();
     parser
         .set_language(&grammar)

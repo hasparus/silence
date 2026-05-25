@@ -140,11 +140,10 @@ Env: `RUNS` (default 50), `WARMUP` (default 5), `SILENCE_BIN` (path to binary).
 
 ### adding a language
 
-Built-in grammars ship in the binary. Heavy or niche languages (e.g. C/C++) are
-downloaded on first use into `~/.config/silence/grammars/` from GitHub release
-assets — no separate install command.
+Built-in: TypeScript/JavaScript, Python. Everything else (Rust, Go, C/C++, TOML, …)
+downloads on first use into `~/.config/silence/grammars/` from GitHub release assets.
 
 1. add optional pack metadata in `silence-langs` (`grammar_pack_id`, extensions)
-2. add a `grammar-*` cdylib crate and release asset in `.github/workflows/release.yml`
+2. add the pack to `silence-grammar-packs/build.rs` and release assets in `.github/workflows/release.yml`
 3. wire `silence-grammars` `ensure()`; `every_grammar_loads_and_query_compiles`
    in `silence-strip-grammars` verifies query/ABI

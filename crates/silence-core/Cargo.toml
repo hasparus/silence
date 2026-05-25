@@ -15,8 +15,12 @@ path = "src/lib.rs"
 [dependencies]
 tree-sitter.workspace = true
 silence-strip-langs.workspace = true
+silence-strip-grammars = { workspace = true, default-features = false }
 globset.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+silence-strip-grammars = { workspace = true, features = ["embed-optional"] }
 
 [lints]
 workspace = true

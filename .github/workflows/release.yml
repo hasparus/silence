@@ -18,20 +18,36 @@ jobs:
         include:
           - os: ubuntu-latest
             asset: silence-linux-x86_64
+            grammar_platform: linux-x86_64
+            grammar_ext: so
           - os: macos-15-intel
             asset: silence-darwin-x86_64
+            grammar_platform: darwin-x86_64
+            grammar_ext: dylib
           - os: macos-14
             asset: silence-darwin-aarch64
+            grammar_platform: darwin-aarch64
+            grammar_ext: dylib
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release
+      - run: cargo build --release -p silence-cli -p silence-grammar-packs
       - run: cp target/release/silence "${{ matrix.asset }}"
+      - run: |
+          for pack in rust go toml cpp; do
+            cp "target/release/libsilence_grammar_${pack}.${{ matrix.grammar_ext }}" \
+              "silence-grammar-${pack}-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}"
+          done
       - run: ./"${{ matrix.asset }}" --help
       - uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset }}
+          files: |
+            ${{ matrix.asset }}
+            silence-grammar-rust-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
+            silence-grammar-go-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
+            silence-grammar-toml-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
+            silence-grammar-cpp-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
 
   publish-crates:
     name: crates.io
@@ -93,5 +109,6 @@ jobs:
           }
 
           publish_crate silence-strip-langs silence-strip-langs
+          publish_crate silence-strip-grammars silence-strip-grammars
           publish_crate silence-strip-core silence-strip-core
           publish_crate silence-cli silence-cli
