@@ -23,15 +23,18 @@ cargo install silence-cli
 
 or grab a binary from [Releases](https://github.com/hasparus/silence/releases).
 
-## usage
+## tldr
 
 ```
-silence src/ -r                # strip a tree (respects .gitignore / .silenceignore)
-silence file.rs --check        # report only; exit 1 if comments present
-silence --staged               # only comments inside staged hunks
-silence --changes              # staged + unstaged + untracked
-silence file.py --preserve-lines   # keep blank lines where comments were
 silence --install-hook         # wire silence into your AI agent's post-edit hook
+
+silence src/ -r                # strip a tree (respects .gitignore and .silenceignore)
+silence file.rs --check        # exit 1 if comments present, don't write files
+silence --staged               # only strip comments inside staged hunks
+silence --changes              # strip comments inside all uncommitted changes
+silence file.py --preserve-lines   # keep blank lines where comments were
+
+silence --llm # print a short guide for llms
 ```
 
 ## rant
@@ -41,28 +44,30 @@ asked. Yes it's "no-slop and production-grade". Neither the code reviewer,
 nor future me, nor future you spending tokens reading this code needs to
 know that I asked.
 
+## usage
+
 ### flags
 
-**Processing**
+**processing**
 
 - `<path>` — file or directory (omit when using a git mode or action flag)
 - `-r, --recursive` — recurse into subdirectories
-- `--check` — print what would be removed; exit 1 if any. Suits CI gates.
+- `--check` — print what would be removed; exit 1 if any.
 - `--inline` — remove only line comments (`//`, `#`)
 - `--block` — remove only block comments (`/* … */`)
 - `--preserve-lines` — leave blank lines where comments were, instead of collapsing
 - `--backup` — write a `<file>.bak` next to each modified file
 - `--no-default-preserve` — drop the built-in preserve list and directive detection
 - `--threads N` — parallelism (default: CPU count)
-- `--verbose` — narrate what's happening
+- `--verbose` — verbose output
 
-**Git scoping**
+**git scoping**
 
 - `--staged` — only comments inside staged hunks
 - `--unstaged` — only comments inside unstaged + untracked changes
-- `--changes` (alias `--changes-only`) — staged + unstaged + untracked
+- `--changes` (alias `--changes-only`) — strip comments inside all uncommitted changes
 
-**Agent hooks**
+**agent hooks**
 
 - `--install-hook` — wire `silence --hook` into `~/.claude/`, `~/.codex/`,
   `~/.config/opencode/plugins/`, `~/.pi/agent/extensions/`
@@ -71,10 +76,9 @@ know that I asked.
 - `--uninstall-hook` — clean up installed hooks
 - `--hook-status` (alias `--list-hooks`) — per-agent install state
 - `--project` — scope the hook commands to the current project instead of `~`
-- `--hook` — the post-edit handler itself: reads a path arg or the agent's
-  stdin event, strips comments inside the uncommitted change, always exits 0
+- `--hook` — reads a path arg or the agent's stdin event, strips comments inside the uncommitted change, always exits 0
 
-**Config**
+**config**
 
 - `--config` — print the active configuration and where it came from
 - `--create-config` — write an example `.silence.toml` to the current directory
@@ -98,17 +102,17 @@ preserve = ["TODO", "FIXME", "*IMPORTANT*"]   # extra patterns; globs allowed
 your `preserve` list. `.silenceignore` (same format as `.gitignore`, optionally
 at `~/.config/.silenceignore`) excludes files from walks.
 
-## design
+## contributing
+
+### design
 
 Tree-sitter parses each file to a CST; a tiny `(comment) @comment` query
 returns exact byte spans; spans matching preserve patterns are dropped (and,
 in git mode, spans outside changed line ranges); the file is reassembled.
-A `/* … */` spanning five lines is one node with one span — no line-by-line
-state to desync, no `// inside "a string"` false positives. The engine
-([`silence-core`](crates/silence-core)) is I/O-free so the tricky logic is
+The engine ([`silence-core`](crates/silence-core)) is I/O-free so the logic is
 unit-tested in isolation and u can build on top of it.
 
-## build
+### build
 
 Needs a Rust toolchain (1.82+). `git2` links libgit2 (vendored by default
 via the crate; system `cmake`/C toolchain may be required on first build).
@@ -119,7 +123,7 @@ cargo test
 ./target/release/silence --help
 ```
 
-## adding a language
+### adding a language
 
 1. add a grammar crate to the workspace `Cargo.toml`
 2. update `Lang::from_extension`, `grammar()`, and `comment_query()`.
