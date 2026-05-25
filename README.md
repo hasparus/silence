@@ -5,7 +5,8 @@
 Strips comments in an agent post-write hook. Preserves doc comments and directives by default (e.g. JSDoc, `eslint-disable-next-line`, `@ts-check`, `noqa:`, `TODO`, `FIXME`, ` HACK`).
 
 Works with Claude Code, Codex, Opencode, and Pi.
-Supports TypeScript/JavaScript, Python, Rust, Go.
+Supports TypeScript/JavaScript, Python, Rust, Go, C/C++, Java, Kotlin, C#, Swift.
+(Installs grammars lazily first time it sees a file to avoid a huge binary.)
 
 ## install
 
@@ -126,9 +127,24 @@ cargo test
 ./target/release/silence --help
 ```
 
+### hook benchmark
+
+Measures end-to-end `silence hook` latency (process spawn + git scan + parse).
+Build release first, then:
+
+```
+./scripts/bench-hook.sh
+```
+
+Env: `RUNS` (default 50), `WARMUP` (default 5), `SILENCE_BIN` (path to binary).
+
 ### adding a language
 
-1. add a grammar crate to the workspace `Cargo.toml`
-2. update `Lang::from_extension`, `grammar()`, and `comment_query()`.
-3. `every_grammar_loads_and_query_compiles` test verifies the grammar/query/ABI
-   line up.
+Built-in grammars ship in the binary. Heavy or niche languages (e.g. C/C++) are
+downloaded on first use into `~/.config/silence/grammars/` from GitHub release
+assets — no separate install command.
+
+1. add optional pack metadata in `silence-langs` (`grammar_pack_id`, extensions)
+2. add a `grammar-*` cdylib crate and release asset in `.github/workflows/release.yml`
+3. wire `silence-grammars` `ensure()`; `every_grammar_loads_and_query_compiles`
+   in `silence-strip-grammars` verifies query/ABI
