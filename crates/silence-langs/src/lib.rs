@@ -55,13 +55,26 @@ impl Lang {
     #[must_use]
     pub fn comment_query(self) -> &'static str {
         match self {
-            Lang::Rust => "(line_comment) @comment (block_comment) @comment",
+            Lang::Rust => "(line_comment) @line (block_comment) @block",
             Lang::TypeScript
             | Lang::Tsx
             | Lang::JavaScript
             | Lang::Python
             | Lang::Go
             | Lang::Toml => "(comment) @comment",
+        }
+    }
+
+    #[must_use]
+    pub fn comment_capture_names(self) -> &'static [&'static str] {
+        match self {
+            Lang::Rust => &["line", "block"],
+            Lang::TypeScript
+            | Lang::Tsx
+            | Lang::JavaScript
+            | Lang::Python
+            | Lang::Go
+            | Lang::Toml => &["comment"],
         }
     }
 }
@@ -95,11 +108,13 @@ mod tests {
             let grammar = lang.grammar();
             let query = tree_sitter::Query::new(&grammar, lang.comment_query())
                 .unwrap_or_else(|e| panic!("query failed for {}: {e:?}", lang.name()));
-            assert!(
-                query.capture_names().contains(&"comment"),
-                "{} query must define @comment",
-                lang.name()
-            );
+            for name in lang.comment_capture_names() {
+                assert!(
+                    query.capture_names().contains(name),
+                    "{} query must define @{name}",
+                    lang.name()
+                );
+            }
         }
     }
 }

@@ -1,39 +1,9 @@
+mod common;
+
 use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
 
-fn silence_bin() -> &'static Path {
-    Path::new(env!("CARGO_BIN_EXE_silence"))
-}
-
-fn tmp(name: &str) -> PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn run(dir: &Path, args: &[&str], extra_env: &[(&str, &Path)]) -> Output {
-    let mut cmd = Command::new(silence_bin());
-    cmd.args(args).current_dir(dir);
-    for (k, v) in extra_env {
-        cmd.env(k, v);
-    }
-    cmd.output().expect("the silence binary should run")
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git must be installed");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
+use common::{git, run_silence, silence_bin, tmp};
 
 #[test]
 fn install_hook_merges_into_existing_claude_settings_json() {
@@ -51,7 +21,7 @@ fn install_hook_merges_into_existing_claude_settings_json() {
     std::fs::write(&settings_path, pre_existing).unwrap();
 
     let cwd = tmp("install-merge-cwd");
-    let out = run(&cwd, &["--install-hook"], &[("HOME", &home)]);
+    let out = run_silence(&cwd, &["hooks", "install"], &[("HOME", &home)]);
     assert!(
         out.status.success(),
         "{}",
@@ -76,15 +46,15 @@ fn install_hook_merges_into_existing_claude_settings_json() {
     assert!(commands.contains(&"echo other"));
     assert!(commands
         .iter()
-        .any(|c| c.contains("silence") && c.contains("--hook")));
+        .any(|c| c.contains("silence") && c.contains(" hook")));
 
-    let again = run(&cwd, &["--install-hook"], &[("HOME", &home)]);
+    let again = run_silence(&cwd, &["hooks", "install"], &[("HOME", &home)]);
     assert!(again.status.success());
     let after: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
     assert_eq!(after["hooks"]["PostToolUse"].as_array().unwrap().len(), 2);
 
-    let un = run(&cwd, &["--uninstall-hook"], &[("HOME", &home)]);
+    let un = run_silence(&cwd, &["hooks", "uninstall"], &[("HOME", &home)]);
     assert!(un.status.success());
     let after_un: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
@@ -122,7 +92,7 @@ fn hook_only_strips_inside_the_uncommitted_change() {
     )
     .unwrap();
 
-    let out = run(&repo, &["--hook", "a.rs"], &[]);
+    let out = run_silence(&repo, &["hook", "a.rs"], &[]);
     assert!(
         out.status.success(),
         "{}",
@@ -155,7 +125,7 @@ fn hook_reads_file_path_from_stdin_json() {
         serde_json::to_string(&path.to_string_lossy().to_string()).unwrap()
     );
     let mut child = Command::new(silence_bin())
-        .args(["--hook"])
+        .args(["hook"])
         .current_dir(&repo)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -181,9 +151,9 @@ fn install_hook_uses_claude_write_edit_and_multiedit_matcher() {
     let home = tmp("claude-matcher-home");
     let cwd = tmp("claude-matcher-cwd");
 
-    let out = run(
+    let out = run_silence(
         &cwd,
-        &["--install-hook", "--to", "claude"],
+        &["hooks", "install", "--to", "claude"],
         &[("HOME", &home)],
     );
     assert!(
@@ -206,7 +176,7 @@ fn install_hook_uses_codex_hooks_wrapper_shape() {
     let home = tmp("codex-shape-home");
     let cwd = tmp("codex-shape-cwd");
 
-    let out = run(&cwd, &["--install-hook"], &[("HOME", &home)]);
+    let out = run_silence(&cwd, &["hooks", "install"], &[("HOME", &home)]);
     assert!(
         out.status.success(),
         "{}",
@@ -229,7 +199,7 @@ fn install_hook_uses_codex_hooks_wrapper_shape() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["matcher"].as_str(), Some("apply_patch"));
     let command = entries[0]["hooks"][0]["command"].as_str().unwrap();
-    assert!(command.contains("silence") && command.contains("--hook"));
+    assert!(command.contains("silence") && command.contains(" hook"));
     assert_eq!(
         entries[0]["hooks"][0]["statusMessage"].as_str(),
         Some("Trimming comments")
@@ -241,9 +211,9 @@ fn install_hook_to_codex_only_does_not_touch_other_agents() {
     let home = tmp("codex-only-home");
     let cwd = tmp("codex-only-cwd");
 
-    let out = run(
+    let out = run_silence(
         &cwd,
-        &["--install-hook", "--to", "codex"],
+        &["hooks", "install", "--to", "codex"],
         &[("HOME", &home)],
     );
     assert!(
@@ -254,7 +224,7 @@ fn install_hook_to_codex_only_does_not_touch_other_agents() {
 
     assert!(home.join(".codex/hooks.json").exists());
     assert!(!home.join(".claude/settings.json").exists());
-    assert!(!home.join(".config/opencode/plugins/silence.js").exists());
+    assert!(!home.join(".config/opencode/plugins/silence.ts").exists());
     assert!(!home.join(".pi/agent/extensions/silence.ts").exists());
 
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -269,9 +239,9 @@ fn install_hook_accepts_multiple_to_flags() {
     let home = tmp("multi-to-home");
     let cwd = tmp("multi-to-cwd");
 
-    let out = run(
+    let out = run_silence(
         &cwd,
-        &["--install-hook", "--to", "codex", "--to", "claude"],
+        &["hooks", "install", "--to", "codex", "--to", "claude"],
         &[("HOME", &home)],
     );
     assert!(
@@ -282,7 +252,7 @@ fn install_hook_accepts_multiple_to_flags() {
 
     assert!(home.join(".codex/hooks.json").exists());
     assert!(home.join(".claude/settings.json").exists());
-    assert!(!home.join(".config/opencode/plugins/silence.js").exists());
+    assert!(!home.join(".config/opencode/plugins/silence.ts").exists());
     assert!(!home.join(".pi/agent/extensions/silence.ts").exists());
 }
 
@@ -298,7 +268,7 @@ fn install_hook_migrates_legacy_codex_root_shape() {
     {
       "matcher": "apply_patch",
       "hooks": [
-        { "type": "command", "command": "/old/silence --hook" }
+        { "type": "command", "command": "/old/silence hook" }
       ]
     }
   ]
@@ -306,9 +276,9 @@ fn install_hook_migrates_legacy_codex_root_shape() {
     )
     .unwrap();
 
-    let out = run(
+    let out = run_silence(
         &cwd,
-        &["--install-hook", "--to", "codex"],
+        &["hooks", "install", "--to", "codex"],
         &[("HOME", &home)],
     );
     assert!(
@@ -324,7 +294,7 @@ fn install_hook_migrates_legacy_codex_root_shape() {
     let entries = codex_hooks["hooks"]["PostToolUse"].as_array().unwrap();
     assert_eq!(entries.len(), 1);
     let command = entries[0]["hooks"][0]["command"].as_str().unwrap();
-    assert!(command.contains("silence") && command.contains("--hook"));
+    assert!(command.contains("silence") && command.contains(" hook"));
 }
 
 #[test]
@@ -340,7 +310,7 @@ fn install_hook_updates_existing_codex_entry_with_status_message() {
       {
         "matcher": "apply_patch",
         "hooks": [
-          { "type": "command", "command": "/old/silence --hook" }
+          { "type": "command", "command": "/old/silence hook" }
         ]
       }
     ]
@@ -349,9 +319,9 @@ fn install_hook_updates_existing_codex_entry_with_status_message() {
     )
     .unwrap();
 
-    let out = run(
+    let out = run_silence(
         &cwd,
-        &["--install-hook", "--to", "codex"],
+        &["hooks", "install", "--to", "codex"],
         &[("HOME", &home)],
     );
     assert!(
@@ -365,7 +335,7 @@ fn install_hook_updates_existing_codex_entry_with_status_message() {
             .unwrap();
     let hook = &codex_hooks["hooks"]["PostToolUse"][0]["hooks"][0];
     assert_eq!(hook["statusMessage"].as_str(), Some("Trimming comments"));
-    assert_ne!(hook["command"].as_str(), Some("/old/silence --hook"));
+    assert_ne!(hook["command"].as_str(), Some("/old/silence hook"));
     assert!(String::from_utf8_lossy(&out.stdout).contains("updated"));
 }
 
@@ -374,21 +344,21 @@ fn install_hook_opencode_uses_singular_project_and_plural_global() {
     let home = tmp("opencode-paths-home");
     let cwd = tmp("opencode-paths-cwd");
 
-    let user = run(&cwd, &["--install-hook"], &[("HOME", &home)]);
+    let user = run_silence(&cwd, &["hooks", "install"], &[("HOME", &home)]);
     assert!(user.status.success());
     assert!(
-        home.join(".config/opencode/plugins/silence.js").exists(),
+        home.join(".config/opencode/plugins/silence.ts").exists(),
         "user-scope opencode plugin must land in .config/opencode/plugins/ (PLURAL)"
     );
     assert!(
-        !home.join(".config/opencode/plugin/silence.js").exists(),
+        !home.join(".config/opencode/plugin/silence.ts").exists(),
         "must not also write to the singular variant"
     );
 
-    let scoped = run(&cwd, &["--install-hook", "--project"], &[("HOME", &home)]);
+    let scoped = run_silence(&cwd, &["hooks", "install", "--project"], &[("HOME", &home)]);
     assert!(scoped.status.success());
     assert!(
-        cwd.join(".opencode/plugin/silence.js").exists(),
+        cwd.join(".opencode/plugin/silence.ts").exists(),
         "project-scope opencode plugin must land in .opencode/plugin/ (SINGULAR)"
     );
 }
@@ -397,28 +367,32 @@ fn install_hook_opencode_uses_singular_project_and_plural_global() {
 fn generated_plugin_and_extension_have_verified_field_names() {
     let home = tmp("plugin-content-home");
     let cwd = tmp("plugin-content-cwd");
-    let out = run(&cwd, &["--install-hook"], &[("HOME", &home)]);
+    let out = run_silence(&cwd, &["hooks", "install"], &[("HOME", &home)]);
     assert!(out.status.success());
 
     let opencode_plugin =
-        std::fs::read_to_string(home.join(".config/opencode/plugins/silence.js")).unwrap();
+        std::fs::read_to_string(home.join(".config/opencode/plugins/silence.ts")).unwrap();
     assert!(
         opencode_plugin.contains("\"tool.execute.after\""),
         "opencode plugin must hook tool.execute.after"
     );
     assert!(
-        opencode_plugin.contains("args.filePath"),
-        "opencode write/edit tools use `filePath` — that's what the plugin must read"
+        opencode_plugin.contains("@opencode-ai/plugin"),
+        "opencode plugin must use official plugin types"
     );
     assert!(
-        opencode_plugin.contains("apply_patch") && opencode_plugin.contains("args.patchText"),
-        "opencode apply_patch uses `patchText` — plugin must forward it to --hook stdin"
+        opencode_plugin.contains("isFileTool") && opencode_plugin.contains("hasFilePath"),
+        "opencode write/edit tools use `filePath` on input.args"
+    );
+    assert!(
+        opencode_plugin.contains("apply_patch") && opencode_plugin.contains("hasPatchText"),
+        "opencode apply_patch uses `patchText` — plugin must forward it to hook stdin"
     );
     assert!(
         opencode_plugin.contains("execFile(BIN"),
         "opencode plugin should execute without shell expansion"
     );
-    assert!(opencode_plugin.contains("--hook"));
+    assert!(opencode_plugin.contains("[\"hook\""));
 
     let pi_extension =
         std::fs::read_to_string(home.join(".pi/agent/extensions/silence.ts")).unwrap();
@@ -427,10 +401,14 @@ fn generated_plugin_and_extension_have_verified_field_names() {
         "pi extension must subscribe to the tool_result event"
     );
     assert!(
-        pi_extension.contains("event.input && event.input.path"),
+        pi_extension.contains("isEditToolResult") && pi_extension.contains("isWriteToolResult"),
+        "pi extension must narrow edit/write tool results"
+    );
+    assert!(
+        pi_extension.contains("event.input.path"),
         "pi's edit/write tools use `path` (not file_path)"
     );
-    assert!(pi_extension.contains("--hook"));
+    assert!(pi_extension.contains("[\"hook\""));
 }
 
 #[test]
@@ -454,7 +432,7 @@ fn hook_extracts_path_from_opencode_patch_text_payload() {
     }"#;
 
     let mut child = Command::new(silence_bin())
-        .args(["--hook"])
+        .args(["hook"])
         .current_dir(&repo)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -497,7 +475,7 @@ fn hook_extracts_path_from_codex_apply_patch_payload() {
     }"#;
 
     let mut child = Command::new(silence_bin())
-        .args(["--hook"])
+        .args(["hook"])
         .current_dir(&repo)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -546,7 +524,7 @@ fn hook_in_mixed_staged_file_does_not_strip_committed_comments() {
     )
     .unwrap();
 
-    let out = run(&repo, &["--hook", "a.rs"], &[]);
+    let out = run_silence(&repo, &["hook", "a.rs"], &[]);
     assert!(
         out.status.success(),
         "{}",

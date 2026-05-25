@@ -2,6 +2,8 @@ use serde::Deserialize;
 use silence_core::{PreserveConfig, DEFAULT_PRESERVE_PATTERNS};
 use std::path::{Path, PathBuf};
 
+use crate::paths::home_dir;
+
 #[derive(Debug, Default, Deserialize)]
 pub struct FileConfig {
     #[serde(default)]
@@ -63,7 +65,54 @@ impl LoadedConfig {
         }
         PreserveConfig::with_patterns(patterns).with_directives(use_defaults)
     }
+
+    pub fn print_active(&self, no_default_preserve: bool) {
+        match &self.path {
+            Some(p) => println!("config file: {}", p.display()),
+            None => println!("config file: none (built-in defaults)"),
+        }
+        println!("user preserve patterns:");
+        if self.user_patterns().is_empty() {
+            println!("  (none)");
+        } else {
+            for p in self.user_patterns() {
+                println!("  {p}");
+            }
+        }
+        let defaults_on = self.uses_defaults(no_default_preserve);
+        println!(
+            "built-in preserve list: {}",
+            if defaults_on { "active" } else { "disabled" }
+        );
+        if defaults_on {
+            for p in DEFAULT_PRESERVE_PATTERNS {
+                println!("  {p}");
+            }
+            println!("directive detection: active (@tag, namespace:value, <xml/>)");
+        }
+    }
 }
+
+pub fn create_example_config() -> anyhow::Result<()> {
+    let path = std::env::current_dir()?.join(".silence.toml");
+    if path.exists() {
+        anyhow::bail!("{} already exists", path.display());
+    }
+    std::fs::write(&path, CONFIG_TEMPLATE)?;
+    println!("wrote {}", path.display());
+    Ok(())
+}
+
+const CONFIG_TEMPLATE: &str = r#"# silence configuration — https://github.com/hasparus/silence
+#
+# Comments matching any of these substrings (or globs) are kept. Merged with
+# the built-in list (TODO, FIXME, HACK, lint directives, ...) by default.
+preserve = ["TODO", "FIXME", "*IMPORTANT*"]
+
+# Set to false to drop the built-in preserve list and directive detection,
+# keeping only the patterns above.
+# use_default_preserve = true
+"#;
 
 fn find_config(start: &Path) -> Option<PathBuf> {
     let local = start.join(".silence.toml");
@@ -76,11 +125,9 @@ fn find_config(start: &Path) -> Option<PathBuf> {
             return Some(at_root);
         }
     }
-    if let Some(home) = home_dir() {
-        let global = home.join(".config").join(".silence.toml");
-        if global.is_file() {
-            return Some(global);
-        }
+    let global = home_dir().join(".config").join(".silence.toml");
+    if global.is_file() {
+        return Some(global);
     }
     None
 }
@@ -93,12 +140,6 @@ fn git_root(start: &Path) -> Option<PathBuf> {
         }
         dir = dir.parent()?;
     }
-}
-
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
 }
 
 #[cfg(test)]

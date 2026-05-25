@@ -84,12 +84,6 @@ pub struct Outcome {
     pub preserved: usize,
 }
 
-/// Find comment nodes in `source` using the tree-sitter grammar for `lang`.
-///
-/// # Errors
-///
-/// Returns an error if the parser cannot load the language, parse the source,
-/// or compile the language-specific comment query.
 pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
     let grammar = lang.grammar();
     let mut parser = Parser::new();
@@ -100,9 +94,14 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
 
     let query =
         Query::new(&grammar, lang.comment_query()).map_err(|e| Error::Query(e.to_string()))?;
-    let comment_idx = query
-        .capture_index_for_name("comment")
-        .ok_or_else(|| Error::Query("missing @comment capture".into()))?;
+    let line_idx = query.capture_index_for_name("line");
+    let block_idx = query.capture_index_for_name("block");
+    let comment_idx = query.capture_index_for_name("comment");
+    if line_idx.is_none() && block_idx.is_none() && comment_idx.is_none() {
+        return Err(Error::Query(
+            "missing @line, @block, or @comment capture".into(),
+        ));
+    }
 
     let bytes = source.as_bytes();
     let mut cursor = QueryCursor::new();
@@ -111,9 +110,6 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
     let mut matches = cursor.matches(&query, tree.root_node(), bytes);
     while let Some(m) = matches.next() {
         for cap in m.captures {
-            if cap.index != comment_idx {
-                continue;
-            }
             let node = cap.node;
             let start = node.start_position();
             let end = node.end_position();
@@ -130,10 +126,11 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
                 end_byte -= 1;
             }
 
-            let kind = if text.trim_start().starts_with("/*") {
-                CommentKind::Block
-            } else {
-                CommentKind::Line
+            let kind = match cap.index {
+                i if block_idx == Some(i) => CommentKind::Block,
+                i if line_idx == Some(i) => CommentKind::Line,
+                i if comment_idx == Some(i) => comment_kind_from_text(&text),
+                _ => continue,
             };
 
             out.push(Comment {
@@ -151,6 +148,14 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
     Ok(out)
 }
 
+fn comment_kind_from_text(text: &str) -> CommentKind {
+    if text.trim_start().starts_with("/*") {
+        CommentKind::Block
+    } else {
+        CommentKind::Line
+    }
+}
+
 fn in_ranges(comment: &Comment, ranges: &[(usize, usize)]) -> bool {
     if ranges.is_empty() {
         return true;
@@ -160,11 +165,6 @@ fn in_ranges(comment: &Comment, ranges: &[(usize, usize)]) -> bool {
         .any(|&(s, e)| comment.start_row <= e && comment.end_row >= s)
 }
 
-/// Strip removable comments from `source` according to `opts`.
-///
-/// # Errors
-///
-/// Returns an error when comment discovery fails for the selected language.
 pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error> {
     let comments = find_comments(source, lang)?;
 

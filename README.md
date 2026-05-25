@@ -23,15 +23,15 @@ or grab a binary from [Releases](https://github.com/hasparus/silence/releases).
 ## tldr
 
 ```
-silence --install-hook # wire silence into your AI agent's post-edit hook
+silence hooks install # wire silence into your AI agent's post-edit hook
 
-silence src/ -r # strip comments in a tree (respects .gitignore and .silenceignore)
-silence file.rs --check # exit 1 if comments present, don't write files
-silence --staged # only strip comments inside staged hunks
-silence --changes # strip comments inside all uncommitted changes
-silence file.py --preserve-lines # keep blank lines where comments were
+silence strip src/ -r # strip comments in a tree (respects .gitignore and .silenceignore)
+silence strip file.rs --check # exit 1 if comments present, don't write files
+silence strip --staged # only strip comments inside staged hunks
+silence strip --changes # strip comments inside all uncommitted changes
+silence strip file.py --preserve-lines
 
-silence --llm # print a short guide for llms
+silence llm # print a short guide for llms
 ```
 
 ## rant
@@ -43,43 +43,46 @@ know that I asked.
 
 ## usage
 
-### flags
+### commands
 
-**processing**
+**`silence strip`** — remove or check for comments
 
-- `<path>` — file or directory (omit when using a git mode or action flag)
+- `<path>…` — file or directory (omit when using a git scope flag)
 - `-r, --recursive` — recurse into subdirectories
-- `--check` — print what would be removed; exit 1 if any.
+- `--check` — print what would be removed; exit 1 if any
 - `--inline` — remove only line comments (`//`, `#`)
 - `--block` — remove only block comments (`/* … */`)
-- `--preserve-lines` — leave blank lines where comments were, instead of collapsing
+- `--preserve-lines` — leave blank lines where comments were
 - `--backup` — write a `<file>.bak` next to each modified file
 - `--no-default-preserve` — drop the built-in preserve list and directive detection
 - `--threads N` — parallelism (default: CPU count)
 - `--verbose` — verbose output
-
-**git scoping**
-
 - `--staged` — only comments inside staged hunks
 - `--unstaged` — only comments inside unstaged + untracked changes
-- `--changes` (alias `--changes-only`) — strip comments inside all uncommitted changes
+- `--changes` — strip comments inside all uncommitted changes
 
-**agent hooks**
+**`silence hook`** — agent post-edit hook
 
-- `--install-hook` — wire `silence --hook` into `~/.claude/`, `~/.codex/`,
+- `[path]…` — optional paths; reads the agent's stdin event when omitted
+- strips comments inside the uncommitted change; always exits 0
+- `--no-default-preserve` — same as on `strip`
+
+**`silence hooks`** — install into agent configs
+
+- `install` — wire `silence hook` into `~/.claude/`, `~/.codex/`,
   `~/.config/opencode/plugins/`, `~/.pi/agent/extensions/`
-- `--install-hook --to codex --to claude` — install only selected agent hooks
-- `--install-hook --project` — same files under the current directory
-- `--uninstall-hook` — clean up installed hooks
-- `--hook-status` (alias `--list-hooks`) — per-agent install state
-- `--project` — scope the hook commands to the current project instead of `~`
-- `--hook` — reads a path arg or the agent's stdin event, strips comments inside the uncommitted change, always exits 0
+- `install --to codex --to claude` — selected agents only
+- `install --project` — project-local paths under the current dir
+- `uninstall` — remove installed hooks
+- `status` — per-agent install state
 
-**config**
+**`silence config`**
 
-- `--config` — print the active configuration and where it came from
-- `--create-config` — write an example `.silence.toml` to the current directory
-- `--llm` — print a short usage guide written for AI agents
+- `show` — print active configuration and where it came from
+- `show --no-default-preserve` — preview preserve rules with defaults off
+- `init` — write an example `.silence.toml` to the current dir
+
+**`silence llm`** — usage guide for agents
 
 ## preserve rules
 

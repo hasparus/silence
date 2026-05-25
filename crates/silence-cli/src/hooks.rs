@@ -3,6 +3,8 @@ use clap::ValueEnum;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+use crate::paths::{display_home_relative, home_dir};
+
 #[derive(Debug, Clone, Copy)]
 pub enum Scope {
     User,
@@ -32,30 +34,41 @@ struct Report {
     note: Option<&'static str>,
 }
 
-pub fn install(scope: Scope, agents: &[Agent]) -> Result<()> {
+enum AgentKind {
+    Json {
+        name: &'static str,
+        path: fn(Scope) -> PathBuf,
+        matcher: &'static str,
+        note: Option<&'static str>,
+        codex: bool,
+    },
+    File {
+        name: &'static str,
+        path: fn(Scope) -> PathBuf,
+        content: fn(&str) -> String,
+    },
+}
+
+pub fn install(scope: Scope, agents: &[Agent]) {
     let bin = silence_bin();
     let command = silence_command(&bin);
     run(
         scope,
-        &bin,
         Op::Install { command: &command },
         "installing",
         agents,
-    )
+    );
 }
 
-pub fn uninstall(scope: Scope, agents: &[Agent]) -> Result<()> {
-    let bin = silence_bin();
-    run(scope, &bin, Op::Uninstall, "removing", agents)
+pub fn uninstall(scope: Scope, agents: &[Agent]) {
+    run(scope, Op::Uninstall, "removing", agents);
 }
 
-pub fn status(scope: Scope, agents: &[Agent]) -> Result<()> {
-    let bin = silence_bin();
-    run(scope, &bin, Op::Status, "status of", agents)
+pub fn status(scope: Scope, agents: &[Agent]) {
+    run(scope, Op::Status, "status of", agents);
 }
 
-#[allow(clippy::unnecessary_wraps)]
-fn run(scope: Scope, bin: &str, op: Op, verb: &str, agents: &[Agent]) -> Result<()> {
+fn run(scope: Scope, op: Op, verb: &str, agents: &[Agent]) {
     println!(
         "{verb} silence post-edit hooks ({} scope)",
         scope_label(scope)
@@ -63,28 +76,7 @@ fn run(scope: Scope, bin: &str, op: Op, verb: &str, agents: &[Agent]) -> Result<
     let selected = selected_agents(agents);
     let mut reports = Vec::with_capacity(selected.len());
     for agent in selected {
-        match agent {
-            Agent::Claude => reports.push(json_agent(
-                "Claude Code",
-                claude_path(scope),
-                "Write|Edit|MultiEdit",
-                op,
-                None,
-            )),
-            Agent::Codex => reports.push(codex_agent(
-                codex_path(scope),
-                "apply_patch",
-                op,
-                Some("run /hooks in codex to trust"),
-            )),
-            Agent::Opencode => reports.push(file_agent(
-                "Opencode",
-                opencode_path(scope),
-                &opencode_plugin(bin),
-                op,
-            )),
-            Agent::Pi => reports.push(file_agent("Pi", pi_path(scope), &pi_extension(bin), op)),
-        }
+        reports.push(apply_agent(agent, scope, op));
     }
     let mut any_note = false;
     for r in &reports {
@@ -92,7 +84,7 @@ fn run(scope: Scope, bin: &str, op: Op, verb: &str, agents: &[Agent]) -> Result<
             "  {:<13} {:<18} {}",
             r.agent,
             r.state,
-            display_path(&r.path)
+            display_home_relative(&r.path)
         );
         if r.note.is_some() && r.state == "installed" {
             any_note = true;
@@ -106,7 +98,51 @@ fn run(scope: Scope, bin: &str, op: Op, verb: &str, agents: &[Agent]) -> Result<
             }
         }
     }
-    Ok(())
+}
+
+fn agent_kind(agent: Agent) -> AgentKind {
+    match agent {
+        Agent::Claude => AgentKind::Json {
+            name: "Claude Code",
+            path: claude_path,
+            matcher: "Write|Edit|MultiEdit",
+            note: None,
+            codex: false,
+        },
+        Agent::Codex => AgentKind::Json {
+            name: "Codex",
+            path: codex_path,
+            matcher: "apply_patch",
+            note: Some("run /hooks in codex to trust"),
+            codex: true,
+        },
+        Agent::Opencode => AgentKind::File {
+            name: "Opencode",
+            path: opencode_path,
+            content: opencode_plugin,
+        },
+        Agent::Pi => AgentKind::File {
+            name: "Pi",
+            path: pi_path,
+            content: pi_extension,
+        },
+    }
+}
+
+fn apply_agent(agent: Agent, scope: Scope, op: Op) -> Report {
+    match agent_kind(agent) {
+        AgentKind::Json {
+            name,
+            path,
+            matcher,
+            note,
+            codex,
+        } => json_hook(name, path(scope), matcher, codex, op, note),
+        AgentKind::File { name, path, content } => {
+            let bin = silence_bin();
+            file_hook(name, path(scope), &content(&bin), op)
+        }
+    }
 }
 
 fn selected_agents(agents: &[Agent]) -> Vec<Agent> {
@@ -123,74 +159,43 @@ fn selected_agents(agents: &[Agent]) -> Vec<Agent> {
     }
 }
 
-fn json_agent(
+fn json_hook(
     agent: &'static str,
     path: PathBuf,
     matcher: &str,
+    codex: bool,
     op: Op,
     note: Option<&'static str>,
 ) -> Report {
     let result: Result<&'static str> = (|| match op {
         Op::Install { command } => {
             let mut root = read_json(&path)?;
+            if codex {
+                remove_legacy_codex_silence_entry(&mut root)?;
+            }
             let arr = post_tool_use(&mut root)?;
-            if arr.iter().any(is_silence_entry) {
-                return Ok("already installed");
-            }
-            arr.push(json!({
-                "matcher": matcher,
-                "hooks": [{ "type": "command", "command": command }],
-            }));
-            write_json(&path, &root)?;
-            Ok("installed")
-        }
-        Op::Uninstall => {
-            if !path.exists() {
-                return Ok("not set");
-            }
-            let mut root = read_json(&path)?;
-            let arr = post_tool_use(&mut root)?;
-            let before = arr.len();
-            arr.retain(|e| !is_silence_entry(e));
-            if arr.len() == before {
-                return Ok("not set");
-            }
-            write_json(&path, &root)?;
-            Ok("removed")
-        }
-        Op::Status => {
-            if !path.exists() {
-                return Ok("not set");
-            }
-            let mut root = read_json(&path)?;
-            let active = post_tool_use(&mut root)?.iter().any(is_silence_entry);
-            Ok(if active { "active" } else { "not set" })
-        }
-    })();
-    report(agent, path, result, note)
-}
-
-fn codex_agent(path: PathBuf, matcher: &str, op: Op, note: Option<&'static str>) -> Report {
-    let result: Result<&'static str> = (|| match op {
-        Op::Install { command } => {
-            let mut root = read_json(&path)?;
-            remove_legacy_codex_silence_entry(&mut root)?;
-            let arr = post_tool_use(&mut root)?;
-            if update_codex_silence_entry(arr, matcher, command) {
+            if codex && update_codex_silence_entry(arr, matcher, command) {
                 write_json(&path, &root)?;
                 return Ok("updated");
             }
             if arr.iter().any(is_silence_entry) {
                 return Ok("already installed");
             }
-            arr.push(json!({
-                "matcher": matcher,
-                "hooks": [{
-                    "type": "command",
-                    "command": command,
-                    "statusMessage": "Trimming comments",
-                }],
-            }));
+            if codex {
+                arr.push(json!({
+                    "matcher": matcher,
+                    "hooks": [{
+                        "type": "command",
+                        "command": command,
+                        "statusMessage": "Trimming comments",
+                    }],
+                }));
+            } else {
+                arr.push(json!({
+                    "matcher": matcher,
+                    "hooks": [{ "type": "command", "command": command }],
+                }));
+            }
             write_json(&path, &root)?;
             Ok("installed")
         }
@@ -199,7 +204,11 @@ fn codex_agent(path: PathBuf, matcher: &str, op: Op, note: Option<&'static str>)
                 return Ok("not set");
             }
             let mut root = read_json(&path)?;
-            let mut changed = remove_legacy_codex_silence_entry(&mut root)?;
+            let mut changed = if codex {
+                remove_legacy_codex_silence_entry(&mut root)?
+            } else {
+                false
+            };
             let arr = post_tool_use(&mut root)?;
             let before = arr.len();
             arr.retain(|e| !is_silence_entry(e));
@@ -219,7 +228,7 @@ fn codex_agent(path: PathBuf, matcher: &str, op: Op, note: Option<&'static str>)
             Ok(if active { "active" } else { "not set" })
         }
     })();
-    report("Codex", path, result, note)
+    report(agent, path, result, note)
 }
 
 fn update_codex_silence_entry(arr: &mut [Value], matcher: &str, command: &str) -> bool {
@@ -236,7 +245,7 @@ fn update_codex_silence_entry(arr: &mut [Value], matcher: &str, command: &str) -
             let Some(existing) = hook.get("command").and_then(Value::as_str) else {
                 continue;
             };
-            if !(existing.contains("--hook") && existing.contains("silence")) {
+            if !is_silence_hook_command(existing) {
                 continue;
             }
             let command_changed = existing != command;
@@ -310,6 +319,11 @@ fn post_tool_use(root: &mut Value) -> Result<&mut Vec<Value>> {
         .context("\"PostToolUse\" is not a JSON array")
 }
 
+fn is_silence_hook_command(command: &str) -> bool {
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    parts.last() == Some(&"hook") && parts.iter().any(|p| p.contains("silence"))
+}
+
 fn is_silence_entry(entry: &Value) -> bool {
     entry
         .get("hooks")
@@ -318,12 +332,12 @@ fn is_silence_entry(entry: &Value) -> bool {
             hooks.iter().any(|h| {
                 h.get("command")
                     .and_then(Value::as_str)
-                    .is_some_and(|c| c.contains("--hook") && c.contains("silence"))
+                    .is_some_and(is_silence_hook_command)
             })
         })
 }
 
-fn file_agent(agent: &'static str, path: PathBuf, content: &str, op: Op) -> Report {
+fn file_hook(agent: &'static str, path: PathBuf, content: &str, op: Op) -> Report {
     let result: Result<&'static str> = (|| match op {
         Op::Install { .. } => {
             let existed = path.exists();
@@ -368,44 +382,30 @@ fn report(
 
 fn claude_path(scope: Scope) -> PathBuf {
     match scope {
-        Scope::User => home().join(".claude/settings.json"),
+        Scope::User => home_dir().join(".claude/settings.json"),
         Scope::Project => PathBuf::from(".claude/settings.json"),
     }
 }
 
 fn codex_path(scope: Scope) -> PathBuf {
     match scope {
-        Scope::User => home().join(".codex/hooks.json"),
+        Scope::User => home_dir().join(".codex/hooks.json"),
         Scope::Project => PathBuf::from(".codex/hooks.json"),
     }
 }
 
 fn opencode_path(scope: Scope) -> PathBuf {
     match scope {
-        Scope::User => home().join(".config/opencode/plugins/silence.js"),
-        Scope::Project => PathBuf::from(".opencode/plugin/silence.js"),
+        Scope::User => home_dir().join(".config/opencode/plugins/silence.ts"),
+        Scope::Project => PathBuf::from(".opencode/plugin/silence.ts"),
     }
 }
 
 fn pi_path(scope: Scope) -> PathBuf {
     match scope {
-        Scope::User => home().join(".pi/agent/extensions/silence.ts"),
+        Scope::User => home_dir().join(".pi/agent/extensions/silence.ts"),
         Scope::Project => PathBuf::from(".pi/extensions/silence.ts"),
     }
-}
-
-fn home() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map_or_else(|| PathBuf::from("."), PathBuf::from)
-}
-
-fn display_path(path: &Path) -> String {
-    let home = home();
-    path.strip_prefix(&home).map_or_else(
-        |_| path.display().to_string(),
-        |rest| format!("~/{}", rest.display()),
-    )
 }
 
 fn scope_label(scope: Scope) -> &'static str {
@@ -423,7 +423,7 @@ fn silence_bin() -> String {
 }
 
 fn silence_command(bin: &str) -> String {
-    format!("{} --hook", shell_quote(bin))
+    format!("{} hook", shell_quote(bin))
 }
 
 fn shell_quote(s: &str) -> String {
@@ -443,61 +443,11 @@ fn js_string(s: &str) -> String {
 }
 
 fn opencode_plugin(bin: &str) -> String {
-    format!(
-        r#"// silence post-edit hook — installed by `silence --install-hook`.
-// Strips agent-written comments. Delete this file (or run
-// `silence --uninstall-hook`) to remove it.
-import {{ execFile }} from "node:child_process";
-
-const BIN = {bin};
-
-function runSilence(args, input) {{
-  return new Promise((resolve) => {{
-  const child = execFile(BIN, args, () => resolve());
-  if (input) child.stdin && child.stdin.end(input);
-  }});
-}}
-
-export const SilencePlugin = async () => ({{
-  "tool.execute.after": async (input, output) => {{
-    const tool = input && input.tool;
-    if (tool !== "write" && tool !== "edit" && tool !== "apply_patch") return;
-    const args = (output && output.args) || (input && input.args) || {{}};
-    const file = args.filePath;
-    if (file) {{
-      await runSilence(["--hook", String(file)]);
-      return;
-    }}
-    const patchText = args.patchText;
-    if (patchText) await runSilence(["--hook"], JSON.stringify({{ patchText }}));
-  }},
-}});
-"#,
-        bin = js_string(bin)
-    )
+    include_str!("../assets/opencode-plugin.ts").replace("__BIN__", &js_string(bin))
 }
 
 fn pi_extension(bin: &str) -> String {
-    format!(
-        r#"// silence post-edit hook — installed by `silence --install-hook`.
-// Strips agent-written comments. Delete this file (or run
-// `silence --uninstall-hook`) to remove it.
-import {{ execFile }} from "node:child_process";
-
-const BIN = {bin};
-
-export default function (pi: any) {{
-  pi.on("tool_result", (event: any) => {{
-    if (!event || event.isError) return;
-    const tool = event.toolName;
-    if (tool !== "edit" && tool !== "write") return;
-    const file = event.input && event.input.path;
-    if (file) execFile(BIN, ["--hook", String(file)], () => {{}});
-  }});
-}}
-"#,
-        bin = js_string(bin)
-    )
+    include_str!("../assets/pi-extension.ts").replace("__BIN__", &js_string(bin))
 }
 
 #[cfg(test)]
@@ -508,15 +458,15 @@ mod tests {
     fn silence_command_is_shell_safe() {
         assert_eq!(
             silence_command("/usr/local/bin/silence"),
-            "/usr/local/bin/silence --hook"
+            "/usr/local/bin/silence hook"
         );
         assert_eq!(
             silence_command("/tmp/Codex Apps/silence"),
-            "'/tmp/Codex Apps/silence' --hook"
+            "'/tmp/Codex Apps/silence' hook"
         );
         assert_eq!(
             silence_command("/tmp/$postId's/silence"),
-            "'/tmp/$postId'\\''s/silence' --hook"
+            "'/tmp/$postId'\\''s/silence' hook"
         );
     }
 }

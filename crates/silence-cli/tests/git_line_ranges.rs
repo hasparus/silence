@@ -1,66 +1,6 @@
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+mod common;
 
-struct Repo {
-    dir: PathBuf,
-}
-
-impl Repo {
-    fn new(name: &str) -> Repo {
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let repo = Repo { dir };
-        repo.git(&["init", "-q"]);
-        repo.git(&["config", "user.email", "test@example.com"]);
-        repo.git(&["config", "user.name", "test"]);
-        repo.git(&["config", "commit.gpgsign", "false"]);
-        repo
-    }
-
-    fn git(&self, args: &[&str]) {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(&self.dir)
-            .output()
-            .expect("git must be installed to run these tests");
-        assert!(
-            out.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-
-    fn git_output(&self, args: &[&str]) -> Output {
-        Command::new("git")
-            .args(args)
-            .current_dir(&self.dir)
-            .output()
-            .expect("git must be installed to run these tests")
-    }
-
-    fn write(&self, name: &str, contents: &str) {
-        std::fs::write(self.dir.join(name), contents).unwrap();
-    }
-
-    fn read(&self, name: &str) -> String {
-        std::fs::read_to_string(self.dir.join(name)).unwrap()
-    }
-
-    fn silence(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_silence"))
-            .args(args)
-            .current_dir(&self.dir)
-            .output()
-            .expect("the silence binary should run")
-    }
-
-    fn commit_baseline(&self, name: &str, contents: &str) {
-        self.write(name, contents);
-        self.git(&["add", "."]);
-        self.git(&["commit", "-q", "-m", "baseline"]);
-    }
-}
+use common::Repo;
 
 #[test]
 fn staged_mode_skips_a_file_that_also_has_unstaged_edits() {
@@ -74,7 +14,7 @@ fn staged_mode_skips_a_file_that_also_has_unstaged_edits() {
         "fn a() {}\nlet staged = 1; // staged comment\nlet working = 2; // working comment\n",
     );
 
-    let out = repo.silence(&["--staged"]);
+    let out = repo.silence(&["strip", "--staged"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
 
     assert!(out.status.success());
@@ -96,7 +36,7 @@ fn staged_mode_strips_a_cleanly_staged_file() {
     repo.write("b.rs", "fn b() {}\nlet x = 1; // remove me\n");
     repo.git(&["add", "b.rs"]);
 
-    let out = repo.silence(&["--staged"]);
+    let out = repo.silence(&["strip", "--staged"]);
 
     assert!(out.status.success());
     assert_eq!(repo.read("b.rs"), "fn b() {}\nlet x = 1;\n");
@@ -126,7 +66,7 @@ fn changes_mode_widens_a_file_that_is_staged_and_modified() {
         "fn c() {}\n// committed comment, must survive\nlet s = 1; // staged\nlet w = 2; // working\n",
     );
 
-    let out = repo.silence(&["--changes"]);
+    let out = repo.silence(&["strip", "--changes"]);
 
     assert!(out.status.success());
     assert_eq!(
