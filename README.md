@@ -26,13 +26,13 @@ or grab a binary from [Releases](https://github.com/hasparus/silence/releases).
 ## tldr
 
 ```
-silence --install-hook         # wire silence into your AI agent's post-edit hook
+silence --install-hook # wire silence into your AI agent's post-edit hook
 
-silence src/ -r                # strip a tree (respects .gitignore and .silenceignore)
-silence file.rs --check        # exit 1 if comments present, don't write files
-silence --staged               # only strip comments inside staged hunks
-silence --changes              # strip comments inside all uncommitted changes
-silence file.py --preserve-lines   # keep blank lines where comments were
+silence src/ -r # strip comments in a tree (respects .gitignore and .silenceignore)
+silence file.rs --check # exit 1 if comments present, don't write files
+silence --staged # only strip comments inside staged hunks
+silence --changes # strip comments inside all uncommitted changes
+silence file.py --preserve-lines # keep blank lines where comments were
 
 silence --llm # print a short guide for llms
 ```
