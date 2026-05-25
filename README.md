@@ -2,7 +2,10 @@
 
 # silence
 
-Strips comments in an agent post-write hook. Preserves doc comments and directives by default (e.g. JSDoc, `eslint-disable-next-line`, `@ts-check`, `noqa:`, `TODO`, `FIXME`, ` HACK`). Works with Claude Code, Codex, Opencode, and Pi.
+Strips comments in an agent post-write hook. Preserves doc comments and directives by default (e.g. JSDoc, `eslint-disable-next-line`, `@ts-check`, `noqa:`, `TODO`, `FIXME`, ` HACK`).
+
+Works with Claude Code, Codex, Opencode, and Pi.
+Supports TypeScript/JavaScript, Python, Rust, Go.
 
 ## install
 
