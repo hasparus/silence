@@ -1,5 +1,6 @@
 mod config;
 mod git;
+mod hook_input;
 mod hook_run;
 mod hooks;
 mod paths;
