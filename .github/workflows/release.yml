@@ -56,8 +56,6 @@ jobs:
       - if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
       - name: Build
-        env:
-          SILENCE_GRAMMAR_PUBLIC_KEY: ${{ vars.SILENCE_GRAMMAR_PUBLIC_KEY }}
         run: cargo build --release -p silence-cli -p silence-grammar-packs
       - name: Stage CLI asset
         run: |
@@ -78,12 +76,12 @@ jobs:
         run: cargo install --locked rsign2
       - name: Sign grammar dylibs
         env:
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
           MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
         run: |
-          test -n "${MINISIGN_SECRET_KEY:-}" || { echo "MINISIGN_SECRET_KEY missing"; exit 1; }
+          test -n "${MINISIGN_PRIVATE_KEY:-}" || { echo "MINISIGN_PRIVATE_KEY missing"; exit 1; }
           key_file="$(mktemp)"
-          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key_file"
+          printf '%s\n' "$MINISIGN_PRIVATE_KEY" > "$key_file"
           for pack in rust go toml cpp; do
             asset="silence-grammar-${pack}-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}"
             printf '%s\n' "$MINISIGN_PASSWORD" | rsign sign -s "$key_file" -W -x "${asset}.minisig" "$asset"

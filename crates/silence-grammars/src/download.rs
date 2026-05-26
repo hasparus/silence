@@ -51,19 +51,16 @@ pub fn ensure_on_disk(lang: Lang) -> Result<PathBuf, GrammarError> {
         return Ok(dest);
     }
 
-    let url = if let Ok(url) = std::env::var("SILENCE_GRAMMAR_TEST_URL") {
-        url
-    } else {
-        let platform = Platform::detect().ok_or_else(|| GrammarError::Install {
-            lang: lang.name(),
-            msg: format!(
-                "unsupported platform {}/{}",
-                std::env::consts::ARCH,
-                std::env::consts::OS
-            ),
-        })?;
-        download_url(lang, platform).ok_or(GrammarError::MissingPackId { lang: lang.name() })?
-    };
+    let platform = Platform::detect().ok_or_else(|| GrammarError::Install {
+        lang: lang.name(),
+        msg: format!(
+            "unsupported platform {}/{}",
+            std::env::consts::ARCH,
+            std::env::consts::OS
+        ),
+    })?;
+    let url =
+        download_url(lang, platform).ok_or(GrammarError::MissingPackId { lang: lang.name() })?;
     eprintln!(
         "silence: installing {} grammar from release v{}…",
         lang.name(),
@@ -378,11 +375,11 @@ mod tests {
         let body = b"grammar-bytes".to_vec();
         let (url, server) = spawn_http(body.clone(), 200)?;
 
-        let path = install_from_url(Lang::Go, &url)?;
+        let path = install_from_url_with_key(Lang::Go, &url, None)?;
         join_server(server)?;
         assert_eq!(fs::read(&path)?, body);
 
-        let path2 = install_from_url(Lang::Go, "http://127.0.0.1:1/unreachable")?;
+        let path2 = install_from_url_with_key(Lang::Go, "http://127.0.0.1:1/unreachable", None)?;
         assert_eq!(path, path2);
         assert_eq!(fs::read(&path2)?, body);
         Ok(())
@@ -442,7 +439,7 @@ mod tests {
         let _guard = ConfigHome::set(home.path().to_path_buf());
         let (url, server) = spawn_http(bytes, 200)?;
 
-        let path = install_from_url(Lang::Rust, &url)?;
+        let path = install_from_url_with_key(Lang::Rust, &url, None)?;
         join_server(server)?;
 
         let symbol = Lang::Rust.grammar_symbol().ok_or("rust grammar symbol")?;

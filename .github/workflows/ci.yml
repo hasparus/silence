@@ -29,4 +29,3 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo build -p silence-grammar-packs
       - run: cargo test --workspace --locked
-      - run: cargo test -p silence-strip-grammars --no-default-features --test auto_download --locked
