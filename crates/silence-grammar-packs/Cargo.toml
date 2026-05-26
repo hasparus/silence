@@ -1,9 +1,9 @@
 [package]
 name = "silence-grammar-packs"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
 description = "Optional tree-sitter grammar shared libraries for silence"
 publish = false
 build = "build.rs"

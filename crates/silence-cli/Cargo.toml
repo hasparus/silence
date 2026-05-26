@@ -1,9 +1,9 @@
 [package]
 name = "silence-cli"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
 description = "Remove comments from source code using tree-sitter. Installs a post-edit hook into Claude Code, Codex, Opencode, and Pi so AI-written slop comments are stripped automatically. Provides the `silence` binary."
 keywords = ["comments", "tree-sitter", "claude-code", "codex", "agent"]
 categories = ["command-line-utilities", "development-tools"]
@@ -14,17 +14,17 @@ name = "silence"
 path = "src/main.rs"
 
 [dependencies]
-silence-strip-core.workspace = true
-silence-strip-langs.workspace = true
+silence-strip-core = { workspace = true }
+silence-strip-langs = { workspace = true }
 silence-strip-grammars = { workspace = true, default-features = false }
-clap.workspace = true
-ignore.workspace = true
-rayon.workspace = true
-git2.workspace = true
-toml.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-anyhow.workspace = true
+clap = { workspace = true }
+ignore = { workspace = true }
+rayon = { workspace = true }
+git2 = { workspace = true }
+toml = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
 
 [dev-dependencies]
 silence-strip-grammars = { workspace = true, features = ["embed-optional"] }

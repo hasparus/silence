@@ -1,9 +1,9 @@
 [package]
 name = "silence-strip-grammars"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
 description = "Built-in and on-demand tree-sitter grammars for silence"
 keywords = ["tree-sitter", "grammar"]
 categories = ["parser-implementations"]
@@ -22,16 +22,16 @@ embed-optional = [
 ]
 
 [dependencies]
-silence-strip-langs.workspace = true
-tree-sitter.workspace = true
-tree-sitter-python.workspace = true
-tree-sitter-typescript.workspace = true
+silence-strip-langs = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-python = { workspace = true }
+tree-sitter-typescript = { workspace = true }
 tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
 tree-sitter-toml-ng = { workspace = true, optional = true }
 libloading = "0.8"
-thiserror.workspace = true
+thiserror = { workspace = true }
 ureq = { version = "3", default-features = true, features = ["rustls"] }
 minisign-verify = "0.2"
 
@@ -39,7 +39,9 @@ minisign-verify = "0.2"
 tempfile = "3"
 minisign = "0.7"
 
-[lints]
-rust.unsafe_code = "allow"
-clippy.all = { level = "deny", priority = -1 }
-clippy.pedantic = { level = "warn", priority = -1 }
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
