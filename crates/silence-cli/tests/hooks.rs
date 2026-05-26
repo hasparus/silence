@@ -89,6 +89,64 @@ fn install_hook_merges_into_existing_claude_settings_json() -> TestResult {
 }
 
 #[test]
+fn hook_preserves_doc_comments_alongside_stripping_regular_ones() -> TestResult {
+    let repo = tmp("hook-doc-comments")?;
+    git(&repo, &["init", "-q"])?;
+    git(&repo, &["config", "user.email", "t@t"])?;
+    git(&repo, &["config", "user.name", "t"])?;
+    git(&repo, &["config", "commit.gpgsign", "false"])?;
+
+    std::fs::write(repo.join("a.rs"), "fn baseline() {}\n")?;
+    git(&repo, &["add", "."])?;
+    git(&repo, &["commit", "-q", "-m", "baseline", "--no-gpg-sign"])?;
+
+    let new_contents = "fn baseline() {}\n\
+/// outer doc — must survive\n\
+/// second line of outer doc\n\
+pub fn documented() {}\n\
+//! inner doc — must survive\n\
+/** block doc — must survive */\n\
+pub fn other() {}\n\
+// regular line comment — must be stripped\n\
+let x = 5; // trailing regular — must be stripped\n";
+    std::fs::write(repo.join("a.rs"), new_contents)?;
+
+    let out = run_silence(&repo, &["hook", "a.rs"], &[])?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let after = std::fs::read_to_string(repo.join("a.rs"))?;
+    assert!(
+        after.contains("/// outer doc — must survive"),
+        "outer doc comment was stripped:\n{after}"
+    );
+    assert!(
+        after.contains("/// second line of outer doc"),
+        "second line of outer doc was stripped:\n{after}"
+    );
+    assert!(
+        after.contains("//! inner doc — must survive"),
+        "inner doc comment was stripped:\n{after}"
+    );
+    assert!(
+        after.contains("/** block doc — must survive */"),
+        "block doc comment was stripped:\n{after}"
+    );
+    assert!(
+        !after.contains("regular line comment"),
+        "regular line comment survived:\n{after}"
+    );
+    assert!(
+        !after.contains("trailing regular"),
+        "trailing regular comment survived:\n{after}"
+    );
+    Ok(())
+}
+
+#[test]
 fn hook_only_strips_inside_the_uncommitted_change() -> TestResult {
     let repo = tmp("hook-uncommitted")?;
     git(&repo, &["init", "-q"])?;

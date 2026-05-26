@@ -57,7 +57,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
       - name: Build
         env:
-          SILENCE_GRAMMAR_PUBLIC_KEY: ${{ secrets.SILENCE_GRAMMAR_PUBLIC_KEY }}
+          SILENCE_GRAMMAR_PUBLIC_KEY: ${{ vars.SILENCE_GRAMMAR_PUBLIC_KEY }}
         run: cargo build --release -p silence-cli -p silence-grammar-packs
       - name: Stage CLI asset
         run: |
