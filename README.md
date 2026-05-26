@@ -19,18 +19,18 @@ curl -sSf https://raw.githubusercontent.com/hasparus/silence/main/install.sh | s
 install with cargo
 
 ```sh
-cargo install silence-cli
+cargo install silence-cli && silence hook install
 ```
 
 or grab a binary from [Releases](https://github.com/hasparus/silence/releases).
 
 ## tldr
 
-```
+```sh
 silence hooks install # wire silence into your AI agent's post-edit hook
 
 silence strip src/ -r # strip comments in a tree (respects .gitignore and .silenceignore)
-silence strip file.rs --check # exit 1 if comments present, don't write files
+silence strip file1.rs file2.rs --check # exit 1 if comments present, don't write files
 silence strip --staged # only strip comments inside staged hunks
 silence strip --changes # strip comments inside all uncommitted changes
 silence strip file.py --preserve-lines

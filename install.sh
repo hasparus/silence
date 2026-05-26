@@ -65,4 +65,7 @@ case ":$PATH:" in
 esac
 
 echo ""
-echo "next: $BIN_NAME --help    (or: $BIN_NAME hooks install)"
+"$BIN_DIR/$BIN_NAME" hooks install
+
+echo ""
+echo "✔︎ hook configured, run \`$BIN_NAME --help\` to learn more"
