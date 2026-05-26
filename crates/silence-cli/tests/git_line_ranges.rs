@@ -1,136 +1,79 @@
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+mod common;
 
-struct Repo {
-    dir: PathBuf,
-}
-
-impl Repo {
-    fn new(name: &str) -> Repo {
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let repo = Repo { dir };
-        repo.git(&["init", "-q"]);
-        repo.git(&["config", "user.email", "test@example.com"]);
-        repo.git(&["config", "user.name", "test"]);
-        repo.git(&["config", "commit.gpgsign", "false"]);
-        repo
-    }
-
-    fn git(&self, args: &[&str]) {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(&self.dir)
-            .output()
-            .expect("git must be installed to run these tests");
-        assert!(
-            out.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-
-    fn git_output(&self, args: &[&str]) -> Output {
-        Command::new("git")
-            .args(args)
-            .current_dir(&self.dir)
-            .output()
-            .expect("git must be installed to run these tests")
-    }
-
-    fn write(&self, name: &str, contents: &str) {
-        std::fs::write(self.dir.join(name), contents).unwrap();
-    }
-
-    fn read(&self, name: &str) -> String {
-        std::fs::read_to_string(self.dir.join(name)).unwrap()
-    }
-
-    fn silence(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_silence"))
-            .args(args)
-            .current_dir(&self.dir)
-            .output()
-            .expect("the silence binary should run")
-    }
-
-    fn commit_baseline(&self, name: &str, contents: &str) {
-        self.write(name, contents);
-        self.git(&["add", "."]);
-        self.git(&["commit", "-q", "-m", "baseline"]);
-    }
-}
+use common::{Repo, TestResult};
 
 #[test]
-fn staged_mode_skips_a_file_that_also_has_unstaged_edits() {
-    let repo = Repo::new("staged-skips-dirty");
-    repo.commit_baseline("a.rs", "fn a() {}\n");
+fn staged_mode_skips_a_file_that_also_has_unstaged_edits() -> TestResult {
+    let repo = Repo::new("staged-skips-dirty")?;
+    repo.commit_baseline("a.rs", "fn a() {}\n")?;
 
-    repo.write("a.rs", "fn a() {}\nlet staged = 1; // staged comment\n");
-    repo.git(&["add", "a.rs"]);
+    repo.write("a.rs", "fn a() {}\nlet staged = 1; // staged comment\n")?;
+    repo.git(&["add", "a.rs"])?;
     repo.write(
         "a.rs",
         "fn a() {}\nlet staged = 1; // staged comment\nlet working = 2; // working comment\n",
-    );
+    )?;
 
-    let out = repo.silence(&["--staged"]);
+    let out = repo.silence(&["strip", "--staged"])?;
     let stderr = String::from_utf8_lossy(&out.stderr);
 
     assert!(out.status.success());
     assert_eq!(
-        repo.read("a.rs"),
+        repo.read("a.rs")?,
         "fn a() {}\nlet staged = 1; // staged comment\nlet working = 2; // working comment\n",
     );
     assert!(
         stderr.contains("a.rs") && stderr.contains("unstaged"),
         "expected a skip warning mentioning unstaged changes, got: {stderr}"
     );
+    Ok(())
 }
 
 #[test]
-fn staged_mode_strips_a_cleanly_staged_file() {
-    let repo = Repo::new("staged-clean");
-    repo.commit_baseline("b.rs", "fn b() {}\n");
+fn staged_mode_strips_a_cleanly_staged_file() -> TestResult {
+    let repo = Repo::new("staged-clean")?;
+    repo.commit_baseline("b.rs", "fn b() {}\n")?;
 
-    repo.write("b.rs", "fn b() {}\nlet x = 1; // remove me\n");
-    repo.git(&["add", "b.rs"]);
+    repo.write("b.rs", "fn b() {}\nlet x = 1; // remove me\n")?;
+    repo.git(&["add", "b.rs"])?;
 
-    let out = repo.silence(&["--staged"]);
+    let out = repo.silence(&["strip", "--staged"])?;
 
     assert!(out.status.success());
-    assert_eq!(repo.read("b.rs"), "fn b() {}\nlet x = 1;\n");
+    assert_eq!(repo.read("b.rs")?, "fn b() {}\nlet x = 1;\n");
     let cached =
-        String::from_utf8_lossy(&repo.git_output(&["diff", "--cached", "--", "b.rs"]).stdout)
+        String::from_utf8_lossy(&repo.git_output(&["diff", "--cached", "--", "b.rs"])?.stdout)
             .into_owned();
     assert!(cached.contains("+let x = 1;"));
     assert!(!cached.contains("remove me"));
     assert!(
-        repo.git_output(&["diff", "--", "b.rs"]).stdout.is_empty(),
+        repo.git_output(&["diff", "--", "b.rs"])?.stdout.is_empty(),
         "--staged should restage stripped worktree changes"
     );
+    Ok(())
 }
 
 #[test]
-fn changes_mode_widens_a_file_that_is_staged_and_modified() {
-    let repo = Repo::new("changes-conflicted");
-    repo.commit_baseline("c.rs", "fn c() {}\n// committed comment, must survive\n");
+fn changes_mode_widens_a_file_that_is_staged_and_modified() -> TestResult {
+    let repo = Repo::new("changes-conflicted")?;
+    repo.commit_baseline("c.rs", "fn c() {}\n// committed comment, must survive\n")?;
 
     repo.write(
         "c.rs",
         "fn c() {}\n// committed comment, must survive\nlet s = 1; // staged\n",
-    );
-    repo.git(&["add", "c.rs"]);
+    )?;
+    repo.git(&["add", "c.rs"])?;
     repo.write(
         "c.rs",
         "fn c() {}\n// committed comment, must survive\nlet s = 1; // staged\nlet w = 2; // working\n",
-    );
+    )?;
 
-    let out = repo.silence(&["--changes"]);
+    let out = repo.silence(&["strip", "--changes"])?;
 
     assert!(out.status.success());
     assert_eq!(
-        repo.read("c.rs"),
+        repo.read("c.rs")?,
         "fn c() {}\n// committed comment, must survive\nlet s = 1;\nlet w = 2;\n"
     );
+    Ok(())
 }

@@ -1,9 +1,9 @@
 [package]
 name = "silence-strip-core"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
 description = "Engine for `silence` — strips comments from source code using tree-sitter. I/O-free, language-agnostic; one `strip()` call per file."
 keywords = ["tree-sitter", "comments", "parser", "ast"]
 categories = ["parser-implementations", "development-tools"]
@@ -13,10 +13,14 @@ name = "silence_core"
 path = "src/lib.rs"
 
 [dependencies]
-tree-sitter.workspace = true
-silence-strip-langs.workspace = true
-globset.workspace = true
-thiserror.workspace = true
+tree-sitter = { workspace = true }
+silence-strip-langs = { workspace = true }
+silence-strip-grammars = { workspace = true, default-features = false }
+globset = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+silence-strip-grammars = { workspace = true, features = ["embed-optional"] }
 
 [lints]
 workspace = true
