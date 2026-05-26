@@ -14,7 +14,24 @@ enum HookSkip {
     OutsideRepo(PathBuf),
 }
 
-pub fn hook_targets(explicit: &[PathBuf]) -> Vec<PathBuf> {
+struct GitState {
+    root: PathBuf,
+    ranges: HashMap<PathBuf, LineRanges>,
+}
+
+fn git_state() -> Option<GitState> {
+    let ch = git::changes(git::Scope::All).ok()?;
+    let root = ch.root.canonicalize().unwrap_or(ch.root);
+    let mut ranges = HashMap::new();
+    for (rel, r) in ch.files {
+        let abs = root.join(rel);
+        let key = abs.canonicalize().unwrap_or(abs);
+        ranges.insert(key, r);
+    }
+    Some(GitState { root, ranges })
+}
+
+fn hook_targets(explicit: &[PathBuf], state: Option<&GitState>) -> Vec<PathBuf> {
     let mut targets = if explicit.is_empty() {
         match hook_targets_from_stdin() {
             Ok(paths) => paths,
@@ -28,18 +45,15 @@ pub fn hook_targets(explicit: &[PathBuf]) -> Vec<PathBuf> {
     };
     targets.sort();
     targets.dedup();
-    let repo_root = git::changes(git::Scope::All)
-        .ok()
-        .and_then(|c| c.root.canonicalize().ok());
     let mut kept = Vec::with_capacity(targets.len());
     for path in targets {
         if !path.is_file() {
             eprintln!("silence: skip {}: not a file", path.display());
             continue;
         }
-        if let Some(root) = &repo_root {
+        if let Some(s) = state {
             match path.canonicalize() {
-                Ok(canon) if canon.starts_with(root) => {}
+                Ok(canon) if canon.starts_with(&s.root) => {}
                 _ => {
                     log_skip(HookSkip::OutsideRepo(path));
                     continue;
@@ -56,12 +70,12 @@ pub fn hook_targets(explicit: &[PathBuf]) -> Vec<PathBuf> {
 }
 
 pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
-    let targets = hook_targets(explicit);
+    let state = git_state();
+    let targets = hook_targets(explicit, state.as_ref());
     if targets.is_empty() {
         return;
     }
 
-    let git_ranges = hook_git_ranges();
     let opts = StripOpts {
         line_mode: LineMode::Collapse,
         preserve: preserve.clone(),
@@ -71,7 +85,7 @@ pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
     };
 
     for path in targets {
-        let Some(ranges) = hook_line_ranges(&path, git_ranges.as_ref()) else {
+        let Some(ranges) = hook_line_ranges(&path, state.as_ref()) else {
             log_skip(HookSkip::NotInGitChanges(path));
             continue;
         };
@@ -110,23 +124,12 @@ fn log_skip(skip: HookSkip) {
     }
 }
 
-fn hook_line_ranges(path: &Path, git: Option<&HashMap<PathBuf, LineRanges>>) -> Option<LineRanges> {
-    let Some(map) = git else {
+fn hook_line_ranges(path: &Path, state: Option<&GitState>) -> Option<LineRanges> {
+    let Some(s) = state else {
         return Some(Vec::new());
     };
     let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    map.get(&canon).cloned()
-}
-
-fn hook_git_ranges() -> Option<HashMap<PathBuf, LineRanges>> {
-    let ch = git::changes(git::Scope::All).ok()?;
-    let mut map = HashMap::new();
-    for (rel, ranges) in ch.files {
-        let abs = ch.root.join(rel);
-        let key = abs.canonicalize().unwrap_or(abs);
-        map.insert(key, ranges);
-    }
-    Some(map)
+    s.ranges.get(&canon).cloned()
 }
 
 fn hook_targets_from_stdin() -> Result<Vec<PathBuf>, String> {
