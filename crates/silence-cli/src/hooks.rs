@@ -3,7 +3,7 @@ use clap::ValueEnum;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-use crate::paths::{display_home_relative, home_dir};
+use silence_grammars::paths::{display_home_relative, home_dir};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Scope {
@@ -34,13 +34,19 @@ struct Report {
     note: Option<&'static str>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JsonAgent {
+    Claude,
+    Codex,
+}
+
 enum AgentKind {
     Json {
         name: &'static str,
         path: fn(Scope) -> PathBuf,
         matcher: &'static str,
         note: Option<&'static str>,
-        codex: bool,
+        agent: JsonAgent,
     },
     File {
         name: &'static str,
@@ -107,14 +113,14 @@ fn agent_kind(agent: Agent) -> AgentKind {
             path: claude_path,
             matcher: "Write|Edit|MultiEdit",
             note: None,
-            codex: false,
+            agent: JsonAgent::Claude,
         },
         Agent::Codex => AgentKind::Json {
             name: "Codex",
             path: codex_path,
             matcher: "apply_patch",
             note: Some("run /hooks in codex to trust"),
-            codex: true,
+            agent: JsonAgent::Codex,
         },
         Agent::Opencode => AgentKind::File {
             name: "Opencode",
@@ -136,8 +142,8 @@ fn apply_agent(agent: Agent, scope: Scope, op: Op) -> Report {
             path,
             matcher,
             note,
-            codex,
-        } => json_hook(name, path(scope), matcher, codex, op, note),
+            agent,
+        } => json_hook(name, path(scope), matcher, agent, op, note),
         AgentKind::File {
             name,
             path,
@@ -164,42 +170,43 @@ fn selected_agents(agents: &[Agent]) -> Vec<Agent> {
 }
 
 fn json_hook(
-    agent: &'static str,
+    agent_name: &'static str,
     path: PathBuf,
     matcher: &str,
-    codex: bool,
+    agent: JsonAgent,
     op: Op,
     note: Option<&'static str>,
 ) -> Report {
+    let is_codex = agent == JsonAgent::Codex;
     let result: Result<&'static str> = (|| match op {
         Op::Install { command } => {
             let mut root = read_json(&path)?;
-            if codex {
+            if is_codex {
                 remove_legacy_codex_silence_entry(&mut root)?;
             }
             let arr = post_tool_use(&mut root)?;
-            if codex && update_codex_silence_entry(arr, matcher, command) {
+            if is_codex && update_codex_silence_entry(arr, matcher, command) {
                 write_json(&path, &root)?;
                 return Ok("updated");
             }
             if arr.iter().any(is_silence_entry) {
                 return Ok("already installed");
             }
-            if codex {
-                arr.push(json!({
+            let entry = match agent {
+                JsonAgent::Codex => json!({
                     "matcher": matcher,
                     "hooks": [{
                         "type": "command",
                         "command": command,
                         "statusMessage": "Trimming comments",
                     }],
-                }));
-            } else {
-                arr.push(json!({
+                }),
+                JsonAgent::Claude => json!({
                     "matcher": matcher,
                     "hooks": [{ "type": "command", "command": command }],
-                }));
-            }
+                }),
+            };
+            arr.push(entry);
             write_json(&path, &root)?;
             Ok("installed")
         }
@@ -208,7 +215,7 @@ fn json_hook(
                 return Ok("not set");
             }
             let mut root = read_json(&path)?;
-            let mut changed = if codex {
+            let mut changed = if is_codex {
                 remove_legacy_codex_silence_entry(&mut root)?
             } else {
                 false
@@ -232,7 +239,7 @@ fn json_hook(
             Ok(if active { "active" } else { "not set" })
         }
     })();
-    report(agent, path, result, note)
+    report(agent_name, path, result, note)
 }
 
 fn update_codex_silence_entry(arr: &mut [Value], matcher: &str, command: &str) -> bool {

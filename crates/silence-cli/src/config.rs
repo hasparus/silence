@@ -2,7 +2,7 @@ use serde::Deserialize;
 use silence_core::{PreserveConfig, DEFAULT_PRESERVE_PATTERNS};
 use std::path::{Path, PathBuf};
 
-use crate::paths::home_dir;
+use silence_grammars::paths::home_dir;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct FileConfig {

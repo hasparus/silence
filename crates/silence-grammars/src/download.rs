@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use silence_langs::Lang;
 
+use crate::paths;
 use crate::platform::{dynamic_lib_ext, Platform};
 use crate::verify;
 use crate::GrammarError;
@@ -13,19 +14,7 @@ use crate::GrammarError;
 const RELEASE_BASE: &str = "https://github.com/hasparus/silence/releases/download";
 
 pub fn cache_dir() -> PathBuf {
-    config_dir().join("grammars")
-}
-
-fn config_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("SILENCE_CONFIG_DIR") {
-        return PathBuf::from(dir);
-    }
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map_or_else(
-            || PathBuf::from(".config/silence"),
-            |h| PathBuf::from(h).join(".config/silence"),
-        )
+    paths::silence_config_dir().join("grammars")
 }
 
 pub fn cached_dylib(lang: Lang) -> Option<PathBuf> {
@@ -70,7 +59,7 @@ pub fn ensure_on_disk(lang: Lang) -> Result<PathBuf, GrammarError> {
     eprintln!(
         "silence: installed {} grammar ({})",
         lang.name(),
-        display_path(&dest)
+        paths::display_home_relative(&dest)
     );
     Ok(dest)
 }
@@ -145,18 +134,6 @@ pub(crate) fn install_from_url_with_key(
     })?;
     release_lock(&lock);
     Ok(dest)
-}
-
-fn display_path(path: &Path) -> String {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from);
-    if let Some(home) = home {
-        if let Ok(rest) = path.strip_prefix(&home) {
-            return format!("~{}", rest.display());
-        }
-    }
-    path.display().to_string()
 }
 
 fn wait_for_lock(lock: &Path) -> Result<fs::File, GrammarError> {

@@ -1,5 +1,6 @@
 mod download;
 mod load;
+pub mod paths;
 mod platform;
 mod verify;
 

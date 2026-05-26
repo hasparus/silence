@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::git;
-use crate::paths::home_dir;
+use silence_grammars::paths::home_dir;
 
 pub type LineRange = (usize, usize);
 pub type LineRanges = Vec<LineRange>;

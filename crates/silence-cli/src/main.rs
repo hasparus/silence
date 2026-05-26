@@ -3,7 +3,6 @@ mod git;
 mod hook_input;
 mod hook_run;
 mod hooks;
-mod paths;
 mod strip;
 
 use anyhow::{Context, Result};
