@@ -4,7 +4,7 @@
 
 Strips comments in an agent post-write hook. Preserves doc comments and directives by default (e.g. JSDoc, `eslint-disable-next-line`, `@ts-check`, `noqa:`, `TODO`, `FIXME`, ` HACK`).
 
-Works with **Claude Code**, **Codex**, **Opencode**, and **Pi**.
+Works with **Claude Code**, **Codex**, **Opencode**, and **Pi**. \
 Supports TypeScript/JavaScript, Python, Rust, Go, C/C++, Java, Kotlin, C#, Swift.
 
 Grammars are downloaded lazily to avoid a huge binary.
