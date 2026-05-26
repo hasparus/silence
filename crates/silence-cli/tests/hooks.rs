@@ -59,8 +59,7 @@ fn install_hook_merges_into_existing_claude_settings_json() -> TestResult {
 
     let again = run_silence(&cwd, &["hooks", "install"], &[("HOME", &home)])?;
     assert!(again.status.success());
-    let after: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&settings_path)?)?;
+    let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&settings_path)?)?;
     assert_eq!(
         after["hooks"]["PostToolUse"]
             .as_array()
@@ -236,8 +235,9 @@ fn install_hook_uses_claude_write_edit_and_multiedit_matcher() -> TestResult {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let settings: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(home.join(".claude/settings.json"))?)?;
+    let settings: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        home.join(".claude/settings.json"),
+    )?)?;
     assert_eq!(
         settings["hooks"]["PostToolUse"][0]["matcher"].as_str(),
         Some("Write|Edit|MultiEdit")

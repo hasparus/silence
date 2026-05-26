@@ -78,10 +78,7 @@ fn serve_http(stream: &mut TcpStream, status: u16, body: &[u8]) -> Result<(), St
     Ok(())
 }
 
-fn spawn_http_pair(
-    body: Vec<u8>,
-    signature: Vec<u8>,
-) -> Result<(String, ServerHandle), String> {
+fn spawn_http_pair(body: Vec<u8>, signature: Vec<u8>) -> Result<(String, ServerHandle), String> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let handle = thread::spawn(move || -> Result<(), String> {
@@ -120,8 +117,7 @@ fn join_server(handle: ServerHandle) -> Result<(), String> {
 #[test]
 fn download_url_includes_version_and_platform() -> TestResult {
     let _lock = env_lock();
-    let url =
-        download_url(Lang::Rust, Platform::LinuxX86_64).ok_or("rust must have a pack id")?;
+    let url = download_url(Lang::Rust, Platform::LinuxX86_64).ok_or("rust must have a pack id")?;
     assert!(url.contains("/v0.1.1/"));
     assert!(url.contains("silence-grammar-rust-linux-x86_64."));
     Ok(())
@@ -168,7 +164,9 @@ fn install_from_url_surfaces_http_errors() -> TestResult {
     let _guard = ConfigHome::set(home.path().to_path_buf());
     let (url, server) = spawn_http(Vec::new(), 404)?;
 
-    let err = install_from_url(Lang::Toml, &url).err().ok_or("expected error")?;
+    let err = install_from_url(Lang::Toml, &url)
+        .err()
+        .ok_or("expected error")?;
     join_server(server)?;
     let msg = err.to_string();
     assert!(msg.contains("404"), "{msg}");
