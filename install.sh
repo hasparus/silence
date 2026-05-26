@@ -6,7 +6,7 @@
 #
 # Honors:
 #   BIN_DIR   install location (default: $HOME/.local/bin)
-#   VERSION   pin to a specific tag instead of latest (e.g. VERSION=v0.2.0)
+#   VERSION   pin to a specific tag instead of latest (e.g. VERSION=v0.2.1)
 
 set -eu
 
