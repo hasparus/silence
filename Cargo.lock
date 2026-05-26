@@ -883,7 +883,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "silence-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -900,7 +900,7 @@ dependencies = [
 
 [[package]]
 name = "silence-grammar-packs"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "cc",
  "serde_json",
@@ -908,7 +908,7 @@ dependencies = [
 
 [[package]]
 name = "silence-strip-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "globset",
  "silence-strip-grammars",
@@ -919,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "silence-strip-grammars"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "libloading",
  "minisign",
@@ -939,7 +939,7 @@ dependencies = [
 
 [[package]]
 name = "silence-strip-langs"
-version = "0.1.1"
+version = "0.2.0"
 
 [[package]]
 name = "simd-adler32"
