@@ -19,8 +19,11 @@ rust-version = "1.82"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
-all = { level = "deny", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
+all = "deny"
+pedantic = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
 
 [workspace.dependencies]
 tree-sitter = "0.26"
