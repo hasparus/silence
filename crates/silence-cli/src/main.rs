@@ -53,32 +53,8 @@ enum ConfigCommand {
     Init,
 }
 
-#[derive(clap::Args, Debug)]
-struct StripArgs {
-    #[arg(conflicts_with_all = ["staged", "unstaged", "changes"])]
-    paths: Vec<PathBuf>,
-
-    #[arg(long)]
-    check: bool,
-
-    #[arg(short, long)]
-    recursive: bool,
-
-    #[arg(long)]
-    preserve_lines: bool,
-
-    #[arg(long)]
-    no_default_preserve: bool,
-
-    #[arg(long)]
-    inline: bool,
-
-    #[arg(long)]
-    block: bool,
-
-    #[arg(long)]
-    backup: bool,
-
+#[derive(clap::Args, Debug, Default)]
+struct ScopeFlags {
     #[arg(long, conflicts_with_all = ["unstaged", "changes"])]
     staged: bool,
 
@@ -87,12 +63,60 @@ struct StripArgs {
 
     #[arg(long, visible_alias = "changes-only", conflicts_with_all = ["staged", "unstaged"])]
     changes: bool,
+}
+
+#[derive(clap::Args, Debug, Default)]
+struct CommentKindFlags {
+    #[arg(long)]
+    inline: bool,
 
     #[arg(long)]
-    threads: Option<usize>,
+    block: bool,
+}
+
+#[derive(clap::Args, Debug, Default)]
+struct PreserveFlags {
+    #[arg(long)]
+    preserve_lines: bool,
+
+    #[arg(long)]
+    no_default_preserve: bool,
+}
+
+#[derive(clap::Args, Debug, Default)]
+struct OutputFlags {
+    #[arg(long)]
+    check: bool,
+
+    #[arg(long)]
+    backup: bool,
 
     #[arg(long)]
     verbose: bool,
+}
+
+#[derive(clap::Args, Debug)]
+struct StripArgs {
+    #[arg(conflicts_with_all = ["staged", "unstaged", "changes"])]
+    paths: Vec<PathBuf>,
+
+    #[arg(short, long)]
+    recursive: bool,
+
+    #[command(flatten)]
+    kinds: CommentKindFlags,
+
+    #[command(flatten)]
+    scope: ScopeFlags,
+
+    #[command(flatten)]
+    preserve: PreserveFlags,
+
+    #[command(flatten)]
+    output: OutputFlags,
+
+    #[arg(long)]
+    threads: Option<usize>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -150,7 +174,10 @@ fn run() -> Result<()> {
             Ok(())
         }
         Commands::Hook(args) => {
-            let preserve = load_preserve(&LoadedConfig::discover(&std::env::current_dir()?), args.no_default_preserve);
+            let preserve = load_preserve(
+                &LoadedConfig::discover(&std::env::current_dir()?),
+                args.no_default_preserve,
+            );
             hook_run::run_hook(&args.paths, &preserve);
             Ok(())
         }
@@ -162,14 +189,17 @@ fn run() -> Result<()> {
                     .context("failed to configure thread pool")?;
             }
             let loaded = LoadedConfig::discover(&std::env::current_dir()?);
-            run_strip(&args, &loaded, load_preserve(&loaded, args.no_default_preserve))
+            let preserve = load_preserve(&loaded, args.preserve.no_default_preserve);
+            run_strip(&args, &loaded, preserve)
         }
     }
 }
 
 fn hooks_scope(command: &HooksCommand) -> hooks::Scope {
     let project = match command {
-        HooksCommand::Install(a) | HooksCommand::Uninstall(a) | HooksCommand::Status(a) => a.project,
+        HooksCommand::Install(a) | HooksCommand::Uninstall(a) | HooksCommand::Status(a) => {
+            a.project
+        }
     };
     if project {
         hooks::Scope::Project
@@ -180,7 +210,9 @@ fn hooks_scope(command: &HooksCommand) -> hooks::Scope {
 
 fn hooks_agents(command: &HooksCommand) -> &[hooks::Agent] {
     match command {
-        HooksCommand::Install(a) | HooksCommand::Uninstall(a) | HooksCommand::Status(a) => &a.agents,
+        HooksCommand::Install(a) | HooksCommand::Uninstall(a) | HooksCommand::Status(a) => {
+            &a.agents
+        }
     }
 }
 
@@ -193,18 +225,18 @@ fn load_preserve(loaded: &LoadedConfig, no_default_preserve: bool) -> PreserveCo
 }
 
 fn run_strip(args: &StripArgs, loaded: &LoadedConfig, preserve: PreserveConfig) -> Result<()> {
-    if args.verbose {
+    if args.output.verbose {
         match &loaded.path {
             Some(p) => eprintln!("config: {}", p.display()),
             None => eprintln!("config: built-in defaults"),
         }
     }
 
-    let git_scope = if args.staged {
+    let git_scope = if args.scope.staged {
         Some(git::Scope::Staged)
-    } else if args.unstaged {
+    } else if args.scope.unstaged {
         Some(git::Scope::Unstaged)
-    } else if args.changes {
+    } else if args.scope.changes {
         Some(git::Scope::All)
     } else {
         None
@@ -219,30 +251,30 @@ fn run_strip(args: &StripArgs, loaded: &LoadedConfig, preserve: PreserveConfig) 
     let outcome = run_batch(
         &jobs,
         &BatchSettings {
-            line_mode: if args.preserve_lines {
+            line_mode: if args.preserve.preserve_lines {
                 LineMode::PreserveLines
             } else {
                 LineMode::Collapse
             },
             preserve,
-            kinds: comment_kinds_from_flags(args.inline, args.block),
-            check: args.check,
-            backup: args.backup,
-            verbose: args.verbose,
+            kinds: comment_kinds_from_flags(args.kinds.inline, args.kinds.block),
+            check: args.output.check,
+            backup: args.output.backup,
+            verbose: args.output.verbose,
         },
-        args.staged,
+        args.scope.staged,
     )?;
 
-    if args.check {
+    if args.output.check {
         if outcome.removed_total > 0 {
             eprintln!(
                 "{} comment(s) in {} file(s) would be removed",
                 outcome.removed_total, outcome.files_with_comments
             );
-        } else if args.verbose {
+        } else if args.output.verbose {
             eprintln!("no removable comments found");
         }
-    } else if args.verbose {
+    } else if args.output.verbose {
         eprintln!(
             "removed {} comment(s) across {} file(s)",
             outcome.removed_total, outcome.files_with_comments
@@ -253,7 +285,7 @@ fn run_strip(args: &StripArgs, loaded: &LoadedConfig, preserve: PreserveConfig) 
         eprintln!("{} file(s) could not be processed", outcome.error_count);
         std::process::exit(2);
     }
-    if args.check && outcome.removed_total > 0 {
+    if args.output.check && outcome.removed_total > 0 {
         std::process::exit(1);
     }
 

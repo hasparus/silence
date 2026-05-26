@@ -132,9 +132,7 @@ pub fn strip_file(path: &Path, opts: &StripOpts) -> StripOutcome {
     let source = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
-            return StripOutcome::Failed {
-                msg: e.to_string(),
-            };
+            return StripOutcome::Failed { msg: e.to_string() };
         }
     };
 
@@ -148,9 +146,7 @@ pub fn strip_file(path: &Path, opts: &StripOpts) -> StripOutcome {
     let outcome = match strip(&source, lang, &core_opts) {
         Ok(o) => o,
         Err(e) => {
-            return StripOutcome::Failed {
-                msg: e.to_string(),
-            };
+            return StripOutcome::Failed { msg: e.to_string() };
         }
     };
 
@@ -193,9 +189,7 @@ pub fn strip_file(path: &Path, opts: &StripOpts) -> StripOutcome {
                 }
             }
             if let Err(e) = std::fs::write(path, &outcome.output) {
-                return StripOutcome::Failed {
-                    msg: e.to_string(),
-                };
+                return StripOutcome::Failed { msg: e.to_string() };
             }
             if verbose {
                 eprintln!("  {} (-{} comments)", path.display(), outcome.removed);

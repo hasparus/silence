@@ -36,28 +36,24 @@ impl Lang {
     }
 
     #[must_use]
-    pub fn grammar_pack_id(self) -> &'static str {
+    pub fn grammar_pack_id(self) -> Option<&'static str> {
         match self {
-            Lang::Rust => "rust",
-            Lang::Go => "go",
-            Lang::Toml => "toml",
-            Lang::Cpp => "cpp",
-            Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python => {
-                panic!("built-in language has no grammar pack id")
-            }
+            Lang::Rust => Some("rust"),
+            Lang::Go => Some("go"),
+            Lang::Toml => Some("toml"),
+            Lang::Cpp => Some("cpp"),
+            Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python => None,
         }
     }
 
     #[must_use]
-    pub fn grammar_symbol(self) -> &'static str {
+    pub fn grammar_symbol(self) -> Option<&'static str> {
         match self {
-            Lang::Rust => "tree_sitter_rust",
-            Lang::Go => "tree_sitter_go",
-            Lang::Toml => "tree_sitter_toml",
-            Lang::Cpp => "tree_sitter_cpp",
-            Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python => {
-                panic!("built-in language has no dylib symbol")
-            }
+            Lang::Rust => Some("tree_sitter_rust"),
+            Lang::Go => Some("tree_sitter_go"),
+            Lang::Toml => Some("tree_sitter_toml"),
+            Lang::Cpp => Some("tree_sitter_cpp"),
+            Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python => None,
         }
     }
 

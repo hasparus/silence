@@ -2,7 +2,7 @@ use std::mem;
 use std::path::Path;
 
 use libloading::{Library, Symbol};
-use tree_sitter::Language;
+use tree_sitter::{Language, Parser};
 
 use crate::GrammarError;
 
@@ -21,5 +21,13 @@ pub fn language_from_dylib(path: &Path, symbol: &str) -> Result<Language, Gramma
         language_fn()
     };
     mem::forget(library);
+
+    Parser::new()
+        .set_language(&language)
+        .map_err(|e| GrammarError::Load {
+            path: path.to_path_buf(),
+            msg: format!("invalid tree-sitter grammar: {e}"),
+        })?;
+
     Ok(language)
 }

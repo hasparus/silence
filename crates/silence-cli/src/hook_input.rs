@@ -75,33 +75,36 @@ fn paths_from_patch(patch: &str, out: &mut Vec<PathBuf>) {
 mod tests {
     use super::*;
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     #[test]
-    fn claude_tool_input_file_path() {
-        let paths = paths_from_stdin(r#"{"tool_input":{"file_path":"/tmp/a.rs"}}"#).unwrap();
+    fn claude_tool_input_file_path() -> TestResult {
+        let paths = paths_from_stdin(r#"{"tool_input":{"file_path":"/tmp/a.rs"}}"#)?;
         assert_eq!(paths, vec![PathBuf::from("/tmp/a.rs")]);
+        Ok(())
     }
 
     #[test]
-    fn opencode_args_patch_text() {
-        let paths = paths_from_stdin(
-            r#"{"args":{"patchText":"*** Update File: src/a.rs\n+// x\n"}}"#,
-        )
-        .unwrap();
+    fn opencode_args_patch_text() -> TestResult {
+        let paths =
+            paths_from_stdin(r#"{"args":{"patchText":"*** Update File: src/a.rs\n+// x\n"}}"#)?;
         assert_eq!(paths, vec![PathBuf::from("src/a.rs")]);
+        Ok(())
     }
 
     #[test]
-    fn codex_tool_input_patch_in_input_field() {
+    fn codex_tool_input_patch_in_input_field() -> TestResult {
         let paths = paths_from_stdin(
             r#"{"tool_input":{"input":"*** Update File: b.rs\n*** End Patch\n"}}"#,
-        )
-        .unwrap();
+        )?;
         assert_eq!(paths, vec![PathBuf::from("b.rs")]);
+        Ok(())
     }
 
     #[test]
-    fn empty_stdin_is_ok() {
-        assert!(paths_from_stdin("  ").unwrap().is_empty());
+    fn empty_stdin_is_ok() -> TestResult {
+        assert!(paths_from_stdin("  ")?.is_empty());
+        Ok(())
     }
 
     #[test]

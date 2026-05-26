@@ -16,6 +16,7 @@ bench = false
 
 [build-dependencies]
 serde_json = "1"
+cc = "1"
 
 [lints]
 workspace = true

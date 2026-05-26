@@ -84,6 +84,8 @@ pub struct Outcome {
     pub preserved: usize,
 }
 
+/// # Errors
+/// Returns an error if the grammar fails to load or the parser cannot ingest the source.
 pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
     let grammar = silence_grammars::ensure(lang).map_err(|e| Error::Language(e.to_string()))?;
     let mut parser = Parser::new();
@@ -165,6 +167,8 @@ fn in_ranges(comment: &Comment, ranges: &[(usize, usize)]) -> bool {
         .any(|&(s, e)| comment.start_row <= e && comment.end_row >= s)
 }
 
+/// # Errors
+/// Returns an error if comment extraction fails (grammar load or parse error).
 pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error> {
     let comments = find_comments(source, lang)?;
 
@@ -298,104 +302,117 @@ mod tests {
     use super::*;
     use silence_langs::Lang;
 
-    fn strip_default(src: &str, lang: Lang) -> String {
-        strip(src, lang, &Options::default()).unwrap().output
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn strip_default(src: &str, lang: Lang) -> Result<String, Error> {
+        Ok(strip(src, lang, &Options::default())?.output)
     }
 
     #[test]
-    fn comment_marker_inside_string_is_not_removed() {
+    fn comment_marker_inside_string_is_not_removed() -> TestResult {
         let src = r#"let url = "http://example.com"; // strip me"#;
-        let out = strip_default(src, Lang::Rust);
+        let out = strip_default(src, Lang::Rust)?;
         assert_eq!(out, r#"let url = "http://example.com";"#);
+        Ok(())
     }
 
     #[test]
-    fn hash_inside_python_string_is_safe() {
+    fn hash_inside_python_string_is_safe() -> TestResult {
         let src = r#"pattern = "a#b"  # real comment"#;
-        let out = strip_default(src, Lang::Python);
+        let out = strip_default(src, Lang::Python)?;
         assert_eq!(out, r#"pattern = "a#b""#);
+        Ok(())
     }
 
     #[test]
-    fn unbalanced_quote_does_not_desync() {
+    fn unbalanced_quote_does_not_desync() -> TestResult {
         let src = "let x = 5; // it's fine\nlet y = 6;";
-        let out = strip_default(src, Lang::Rust);
+        let out = strip_default(src, Lang::Rust)?;
         assert_eq!(out, "let x = 5;\nlet y = 6;");
+        Ok(())
     }
 
     #[test]
-    fn multiline_block_comment_fully_removed() {
+    fn multiline_block_comment_fully_removed() -> TestResult {
         let src = "fn a() {}\n/* line one\n   line two\n   line three */\nfn b() {}\n";
-        let out = strip_default(src, Lang::Rust);
+        let out = strip_default(src, Lang::Rust)?;
         assert_eq!(out, "fn a() {}\nfn b() {}\n");
+        Ok(())
     }
 
     #[test]
-    fn string_with_trailing_backslash_then_comment() {
+    fn string_with_trailing_backslash_then_comment() -> TestResult {
         let src = r#"let p = "foo\\"; // comment"#;
-        let out = strip_default(src, Lang::Rust);
+        let out = strip_default(src, Lang::Rust)?;
         assert_eq!(out, r#"let p = "foo\\";"#);
+        Ok(())
     }
 
     #[test]
-    fn trailing_comment_trims_whitespace() {
+    fn trailing_comment_trims_whitespace() -> TestResult {
         let src = "let x = 5;    // foo\n";
-        assert_eq!(strip_default(src, Lang::Rust), "let x = 5;\n");
+        assert_eq!(strip_default(src, Lang::Rust)?, "let x = 5;\n");
+        Ok(())
     }
 
     #[test]
-    fn comment_only_line_is_deleted_in_collapse_mode() {
+    fn comment_only_line_is_deleted_in_collapse_mode() -> TestResult {
         let src = "fn a() {}\n// gone\nfn b() {}\n";
-        assert_eq!(strip_default(src, Lang::Rust), "fn a() {}\nfn b() {}\n");
+        assert_eq!(strip_default(src, Lang::Rust)?, "fn a() {}\nfn b() {}\n");
+        Ok(())
     }
 
     #[test]
-    fn comment_only_line_blanked_in_preserve_mode() {
+    fn comment_only_line_blanked_in_preserve_mode() -> TestResult {
         let src = "fn a() {}\n// gone\nfn b() {}\n";
         let opts = Options {
             line_mode: LineMode::PreserveLines,
             ..Default::default()
         };
-        let out = strip(src, Lang::Rust, &opts).unwrap().output;
+        let out = strip(src, Lang::Rust, &opts)?.output;
         assert_eq!(out, "fn a() {}\n\nfn b() {}\n");
+        Ok(())
     }
 
     #[test]
-    fn preserve_pattern_keeps_todo() {
+    fn preserve_pattern_keeps_todo() -> TestResult {
         let src = "// TODO: keep me\n// remove me\nfn a() {}\n";
         let opts = Options {
             preserve: PreserveConfig::with_patterns(vec!["TODO".into()]),
             ..Default::default()
         };
-        let outcome = strip(src, Lang::Rust, &opts).unwrap();
+        let outcome = strip(src, Lang::Rust, &opts)?;
         assert_eq!(outcome.output, "// TODO: keep me\nfn a() {}\n");
         assert_eq!(outcome.removed, 1);
         assert_eq!(outcome.preserved, 1);
+        Ok(())
     }
 
     #[test]
-    fn default_preserves_doc_comments() {
+    fn default_preserves_doc_comments() -> TestResult {
         let src = "/// Public docs.\nfunction a() {}\n/** JSDoc. */\nconst x = 1; // strip\n";
-        let out = strip_default(src, Lang::JavaScript);
+        let out = strip_default(src, Lang::JavaScript)?;
         assert_eq!(
             out,
             "/// Public docs.\nfunction a() {}\n/** JSDoc. */\nconst x = 1;\n"
         );
+        Ok(())
     }
 
     #[test]
-    fn line_ranges_limit_scope() {
+    fn line_ranges_limit_scope() -> TestResult {
         let src = "// keep\nlet x = 1;\nlet y = 2; // go\n";
         let opts = Options {
             line_ranges: vec![(3, 3)],
             ..Default::default()
         };
-        let out = strip(src, Lang::Rust, &opts).unwrap().output;
+        let out = strip(src, Lang::Rust, &opts)?.output;
         assert_eq!(out, "// keep\nlet x = 1;\nlet y = 2;\n");
+        Ok(())
     }
 
     #[test]
-    fn inline_filter_keeps_block_comments() {
+    fn inline_filter_keeps_block_comments() -> TestResult {
         let src = "// line\n/* block */\nfn a() {}\n";
         let opts = Options {
             kinds: CommentKinds {
@@ -405,13 +422,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            strip(src, Lang::Rust, &opts).unwrap().output,
+            strip(src, Lang::Rust, &opts)?.output,
             "/* block */\nfn a() {}\n"
         );
+        Ok(())
     }
 
     #[test]
-    fn block_filter_keeps_line_comments() {
+    fn block_filter_keeps_line_comments() -> TestResult {
         let src = "// line\n/* block */\nfn a() {}\n";
         let opts = Options {
             kinds: CommentKinds {
@@ -421,60 +439,67 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            strip(src, Lang::Rust, &opts).unwrap().output,
+            strip(src, Lang::Rust, &opts)?.output,
             "// line\nfn a() {}\n"
         );
+        Ok(())
     }
 
     #[test]
-    fn go_and_python_and_ts_smoke() {
+    fn go_and_python_and_ts_smoke() -> TestResult {
         assert_eq!(
-            strip_default("package main\n// x\nfunc main() {}\n", Lang::Go),
+            strip_default("package main\n// x\nfunc main() {}\n", Lang::Go)?,
             "package main\nfunc main() {}\n"
         );
-        assert_eq!(strip_default("x = 1  # c\n", Lang::Python), "x = 1\n");
+        assert_eq!(strip_default("x = 1  # c\n", Lang::Python)?, "x = 1\n");
         assert_eq!(
-            strip_default("const x = 1; // c\n", Lang::TypeScript),
+            strip_default("const x = 1; // c\n", Lang::TypeScript)?,
             "const x = 1;\n"
         );
+        Ok(())
     }
 
     #[test]
-    fn python_shebang_is_preserved() {
+    fn python_shebang_is_preserved() -> TestResult {
         let src = "#!/usr/bin/env python3\n# remove me\nx = 1\n";
         assert_eq!(
-            strip_default(src, Lang::Python),
+            strip_default(src, Lang::Python)?,
             "#!/usr/bin/env python3\nx = 1\n"
         );
+        Ok(())
     }
 
     #[test]
-    fn multiple_block_comments_on_one_line_collapse() {
+    fn multiple_block_comments_on_one_line_collapse() -> TestResult {
         let src = "fn a() {}\n/* one */ /* two */\nfn b() {}\n";
-        assert_eq!(strip_default(src, Lang::Rust), "fn a() {}\nfn b() {}\n");
+        assert_eq!(strip_default(src, Lang::Rust)?, "fn a() {}\nfn b() {}\n");
+        Ok(())
     }
 
     #[test]
-    fn inline_block_comment_keeps_token_separator() {
+    fn inline_block_comment_keeps_token_separator() -> TestResult {
         let src = "let/* hi */x = 5;\n";
-        assert_eq!(strip_default(src, Lang::Rust), "let x = 5;\n");
+        assert_eq!(strip_default(src, Lang::Rust)?, "let x = 5;\n");
+        Ok(())
     }
 
     #[test]
-    fn crlf_trailing_comment_keeps_carriage_return() {
+    fn crlf_trailing_comment_keeps_carriage_return() -> TestResult {
         let src = "let x = 5; // c\r\nlet y = 6;\r\n";
         assert_eq!(
-            strip_default(src, Lang::Rust),
+            strip_default(src, Lang::Rust)?,
             "let x = 5;\r\nlet y = 6;\r\n"
         );
+        Ok(())
     }
 
     #[test]
-    fn jsx_comment_in_element_is_removed() {
+    fn jsx_comment_in_element_is_removed() -> TestResult {
         let src = "const a = <div>{/* note */}</div>;\n";
         assert_eq!(
-            strip_default(src, Lang::JavaScript),
+            strip_default(src, Lang::JavaScript)?,
             "const a = <div>{}</div>;\n"
         );
+        Ok(())
     }
 }

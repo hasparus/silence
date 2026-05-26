@@ -11,6 +11,7 @@ enum HookSkip {
     NotInGitChanges(PathBuf),
     UnsupportedLang(PathBuf),
     StripFailed(PathBuf, String),
+    OutsideRepo(PathBuf),
 }
 
 pub fn hook_targets(explicit: &[PathBuf]) -> Vec<PathBuf> {
@@ -27,11 +28,23 @@ pub fn hook_targets(explicit: &[PathBuf]) -> Vec<PathBuf> {
     };
     targets.sort();
     targets.dedup();
+    let repo_root = git::changes(git::Scope::All)
+        .ok()
+        .and_then(|c| c.root.canonicalize().ok());
     let mut kept = Vec::with_capacity(targets.len());
     for path in targets {
         if !path.is_file() {
             eprintln!("silence: skip {}: not a file", path.display());
             continue;
+        }
+        if let Some(root) = &repo_root {
+            match path.canonicalize() {
+                Ok(canon) if canon.starts_with(root) => {}
+                _ => {
+                    log_skip(HookSkip::OutsideRepo(path));
+                    continue;
+                }
+            }
         }
         if lang_for(&path).is_none() {
             log_skip(HookSkip::UnsupportedLang(path));
@@ -90,6 +103,9 @@ fn log_skip(skip: HookSkip) {
         }
         HookSkip::StripFailed(path, msg) => {
             eprintln!("silence: skip {}: {msg}", path.display());
+        }
+        HookSkip::OutsideRepo(path) => {
+            eprintln!("silence: skip {}: outside repository root", path.display());
         }
     }
 }

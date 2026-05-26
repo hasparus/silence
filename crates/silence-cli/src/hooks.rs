@@ -138,7 +138,11 @@ fn apply_agent(agent: Agent, scope: Scope, op: Op) -> Report {
             note,
             codex,
         } => json_hook(name, path(scope), matcher, codex, op, note),
-        AgentKind::File { name, path, content } => {
+        AgentKind::File {
+            name,
+            path,
+            content,
+        } => {
             let bin = silence_bin();
             file_hook(name, path(scope), &content(&bin), op)
         }

@@ -1,6 +1,9 @@
 use std::env;
+use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+type BuildResult<T> = Result<T, Box<dyn Error>>;
 
 struct Pack {
     id: &'static str,
@@ -26,35 +29,64 @@ const PACKS: &[Pack] = &[
     },
 ];
 
-fn grammar_src_dir(crate_name: &str) -> PathBuf {
-    let workspace = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+fn grammar_src_dir(crate_name: &str) -> BuildResult<PathBuf> {
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
+    let workspace = PathBuf::from(manifest_dir)
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
+        .and_then(Path::parent)
+        .ok_or("CARGO_MANIFEST_DIR has no workspace ancestor")?
         .join("Cargo.toml");
     let output = Command::new("cargo")
         .args(["metadata", "--format-version", "1", "--manifest-path"])
         .arg(&workspace)
-        .output()
-        .expect("cargo metadata");
-    assert!(
-        output.status.success(),
-        "cargo metadata failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let json: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("cargo metadata json");
-    for pkg in json["packages"].as_array().expect("packages") {
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let packages = json["packages"]
+        .as_array()
+        .ok_or("cargo metadata: packages not an array")?;
+    for pkg in packages {
         if pkg["name"] == crate_name {
-            let manifest = PathBuf::from(pkg["manifest_path"].as_str().expect("manifest_path"));
-            return manifest.parent().expect("manifest dir").join("src");
+            let manifest_path = pkg["manifest_path"]
+                .as_str()
+                .ok_or("cargo metadata: manifest_path not a string")?;
+            let manifest = PathBuf::from(manifest_path);
+            return manifest
+                .parent()
+                .map(|p| p.join("src"))
+                .ok_or_else(|| format!("{manifest_path} has no parent").into());
         }
     }
-    panic!("{crate_name} not found in workspace metadata");
+    Err(format!("{crate_name} not found in workspace metadata").into())
 }
 
-fn link_shared(out: &Path, src_dir: &Path, parser: &Path, scanner: Option<&Path>) {
+fn link_shared(
+    out: &Path,
+    src_dir: &Path,
+    parser: &Path,
+    scanner: Option<&Path>,
+) -> BuildResult<()> {
+    let target_os = env::var("CARGO_CFG_TARGET_OS")?;
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    if target_os == "windows" && target_env == "msvc" {
+        link_shared_msvc(out, src_dir, parser, scanner)
+    } else {
+        link_shared_unix(out, src_dir, parser, scanner)
+    }
+}
+
+fn link_shared_unix(
+    out: &Path,
+    src_dir: &Path,
+    parser: &Path,
+    scanner: Option<&Path>,
+) -> BuildResult<()> {
     let compiler = env::var("CC").unwrap_or_else(|_| "cc".to_string());
     let mut cmd = Command::new(compiler);
     cmd.arg("-shared")
@@ -68,29 +100,60 @@ fn link_shared(out: &Path, src_dir: &Path, parser: &Path, scanner: Option<&Path>
     if let Some(scanner) = scanner {
         cmd.arg(scanner);
     }
-    let status = cmd.status().expect("spawn cc");
-    assert!(status.success(), "failed to link {out:?}");
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err(format!("failed to link {}", out.display()).into());
+    }
+    Ok(())
 }
 
-fn main() {
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let ext = match env::var("CARGO_CFG_TARGET_OS").unwrap().as_str() {
+fn link_shared_msvc(
+    out: &Path,
+    src_dir: &Path,
+    parser: &Path,
+    scanner: Option<&Path>,
+) -> BuildResult<()> {
+    let tool = cc::Build::new()
+        .cargo_metadata(false)
+        .opt_level(2)
+        .host(&env::var("HOST")?)
+        .target(&env::var("TARGET")?)
+        .get_compiler();
+    let mut cmd = tool.to_command();
+    cmd.arg("/nologo")
+        .arg("/LD")
+        .arg("/O2")
+        .arg(format!("/I{}", src_dir.display()))
+        .arg(format!("/Fe:{}", out.display()))
+        .arg(parser);
+    if let Some(scanner) = scanner {
+        cmd.arg(scanner);
+    }
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err(format!("failed to link {}", out.display()).into());
+    }
+    Ok(())
+}
+
+fn main() -> BuildResult<()> {
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+    let ext = match env::var("CARGO_CFG_TARGET_OS")?.as_str() {
         "macos" => "dylib",
         "linux" => "so",
         "windows" => "dll",
-        os => panic!("unsupported os {os}"),
+        os => return Err(format!("unsupported os {os}").into()),
     };
-    let profile = env::var("PROFILE").unwrap();
-    let target_dir = PathBuf::from(env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
-        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-            .join("../../target")
-            .display()
-            .to_string()
-    }));
+    let profile = env::var("PROFILE")?;
+    let target_dir = if let Ok(dir) = env::var("CARGO_TARGET_DIR") {
+        PathBuf::from(dir)
+    } else {
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR")?).join("../../target")
+    };
     let dest_dir = target_dir.join(profile);
 
     for pack in PACKS {
-        let src_dir = grammar_src_dir(pack.crate_name);
+        let src_dir = grammar_src_dir(pack.crate_name)?;
         let parser = src_dir.join("parser.c");
         let scanner = src_dir.join("scanner.c");
         println!("cargo:rerun-if-changed={}", parser.display());
@@ -104,11 +167,12 @@ fn main() {
             &src_dir,
             &parser,
             scanner.is_file().then_some(scanner.as_path()),
-        );
+        )?;
 
         let dest = dest_dir.join(format!("libsilence_grammar_{}.{}", pack.id, ext));
         if dest != artifact {
-            std::fs::copy(&artifact, &dest).expect("copy grammar dylib to target dir");
+            std::fs::copy(&artifact, &dest)?;
         }
     }
+    Ok(())
 }

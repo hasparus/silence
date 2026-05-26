@@ -20,34 +20,87 @@ jobs:
             asset: silence-linux-x86_64
             grammar_platform: linux-x86_64
             grammar_ext: so
+            shell: bash
+          - os: ubuntu-24.04-arm
+            asset: silence-linux-aarch64
+            grammar_platform: linux-aarch64
+            grammar_ext: so
+            shell: bash
           - os: macos-15-intel
             asset: silence-darwin-x86_64
             grammar_platform: darwin-x86_64
             grammar_ext: dylib
+            shell: bash
           - os: macos-14
             asset: silence-darwin-aarch64
             grammar_platform: darwin-aarch64
             grammar_ext: dylib
+            shell: bash
+          - os: windows-latest
+            asset: silence-windows-x86_64.exe
+            grammar_platform: windows-x86_64
+            grammar_ext: dll
+            shell: bash
+          - os: windows-11-arm
+            asset: silence-windows-aarch64.exe
+            grammar_platform: windows-aarch64
+            grammar_ext: dll
+            shell: bash
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p silence-cli -p silence-grammar-packs
-      - run: cp target/release/silence "${{ matrix.asset }}"
-      - run: |
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Build
+        env:
+          SILENCE_GRAMMAR_PUBLIC_KEY: ${{ secrets.SILENCE_GRAMMAR_PUBLIC_KEY }}
+        run: cargo build --release -p silence-cli -p silence-grammar-packs
+      - name: Stage CLI asset
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/release/silence.exe "${{ matrix.asset }}"
+          else
+            cp target/release/silence "${{ matrix.asset }}"
+          fi
+      - name: Stage grammar dylibs
+        run: |
           for pack in rust go toml cpp; do
             cp "target/release/libsilence_grammar_${pack}.${{ matrix.grammar_ext }}" \
               "silence-grammar-${pack}-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}"
           done
-      - run: ./"${{ matrix.asset }}" --help
+      - name: Smoke test
+        run: ./"${{ matrix.asset }}" --help
+      - name: Install rsign2
+        run: cargo install --locked rsign2
+      - name: Sign grammar dylibs
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          test -n "${MINISIGN_SECRET_KEY:-}" || { echo "MINISIGN_SECRET_KEY missing"; exit 1; }
+          key_file="$(mktemp)"
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key_file"
+          for pack in rust go toml cpp; do
+            asset="silence-grammar-${pack}-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}"
+            printf '%s\n' "$MINISIGN_PASSWORD" | rsign sign -s "$key_file" -W -x "${asset}.minisig" "$asset"
+          done
+          rm -f "$key_file"
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             ${{ matrix.asset }}
             silence-grammar-rust-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
+            silence-grammar-rust-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}.minisig
             silence-grammar-go-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
+            silence-grammar-go-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}.minisig
             silence-grammar-toml-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
+            silence-grammar-toml-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}.minisig
             silence-grammar-cpp-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
+            silence-grammar-cpp-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}.minisig
 
   publish-crates:
     name: crates.io
