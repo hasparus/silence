@@ -41,11 +41,13 @@ jobs:
             grammar_platform: windows-x86_64
             grammar_ext: dll
             shell: bash
+            linker_env: CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=lld-link.exe
           - os: windows-11-arm
             asset: silence-windows-aarch64.exe
             grammar_platform: windows-aarch64
             grammar_ext: dll
             shell: bash
+            linker_env: ""
     defaults:
       run:
         shell: ${{ matrix.shell }}
@@ -56,7 +58,11 @@ jobs:
       - if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
       - name: Build
-        run: cargo build --release -p silence-cli -p silence-grammar-packs
+        run: |
+          if [ -n "${{ matrix.linker_env || '' }}" ]; then
+            export "${{ matrix.linker_env }}"
+          fi
+          cargo build --release -p silence-cli -p silence-grammar-packs
       - name: Stage CLI asset
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
@@ -81,7 +87,7 @@ jobs:
         run: |
           test -n "${MINISIGN_PRIVATE_KEY:-}" || { echo "MINISIGN_PRIVATE_KEY missing"; exit 1; }
           key_file="$(mktemp)"
-          printf '%s\n' "$MINISIGN_PRIVATE_KEY" > "$key_file"
+          printf '%b\n' "$MINISIGN_PRIVATE_KEY" > "$key_file"
           for pack in rust go toml cpp; do
             asset="silence-grammar-${pack}-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}"
             printf '%s\n' "$MINISIGN_PASSWORD" | rsign sign -s "$key_file" -W -x "${asset}.minisig" "$asset"
