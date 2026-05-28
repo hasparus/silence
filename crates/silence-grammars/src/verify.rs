@@ -7,7 +7,7 @@ use crate::GrammarError;
 // the MINISIGN_SECRET_KEY + MINISIGN_PASSWORD GH secrets consumed by
 // release.yml; only those two are sensitive.
 pub const EMBEDDED_PUBLIC_KEY: Option<&str> =
-    Some("RWRxct8QL3k9XRz+2LkniM1AgJ1NMxi8RYajW0C8ZbowY/4DOOBZ0Ro8");
+    Some("RWQFTOFs4+b8QzwazOandS3mLFSGIdf3X0Nga91CavYErsAMFzRTSzUa");
 
 pub fn verify(dylib: &Path, signature_text: &str, key_str: &str) -> Result<(), GrammarError> {
     let key = minisign_verify::PublicKey::from_base64(key_str).map_err(|e| GrammarError::Load {
