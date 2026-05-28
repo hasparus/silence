@@ -79,15 +79,21 @@ jobs:
       - name: Smoke test
         run: ./"${{ matrix.asset }}" --help
       - name: Install rsign2
-        run: cargo install --locked rsign2
+        run: |
+          if [ -n "${{ matrix.linker_env || '' }}" ]; then
+            export "${{ matrix.linker_env }}"
+          fi
+          cargo install --locked rsign2
       - name: Sign grammar dylibs
         env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
           MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
         run: |
-          test -n "${MINISIGN_PRIVATE_KEY:-}" || { echo "MINISIGN_PRIVATE_KEY missing"; exit 1; }
+          secret_key="${MINISIGN_SECRET_KEY:-${MINISIGN_PRIVATE_KEY:-}}"
+          test -n "$secret_key" || { echo "MINISIGN_SECRET_KEY missing"; exit 1; }
           key_file="$(mktemp)"
-          printf '%b\n' "$MINISIGN_PRIVATE_KEY" > "$key_file"
+          printf '%b\n' "$secret_key" > "$key_file"
           for pack in rust go toml cpp; do
             asset="silence-grammar-${pack}-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}"
             printf '%s\n' "$MINISIGN_PASSWORD" | rsign sign -s "$key_file" -W -x "${asset}.minisig" "$asset"
