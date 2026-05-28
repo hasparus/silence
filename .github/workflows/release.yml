@@ -145,13 +145,13 @@ jobs:
           }
 
           crate_published() {
-            curl -fsSL "https://crates.io/api/v1/crates/$1/$2" >/dev/null 2>&1
+            curl -A "hasparus/silence release workflow" -fsSL "https://crates.io/api/v1/crates/$1/$2" >/dev/null 2>&1
           }
 
           wait_for_crate() {
             local crate="$1"
             for _ in {1..30}; do
-              if cargo search "$crate" --limit 1 | grep -F "${crate} = \"${version}\"" >/dev/null; then
+              if crate_published "$crate" "$version"; then
                 return 0
               fi
               sleep 10
