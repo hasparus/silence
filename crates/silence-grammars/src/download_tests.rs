@@ -117,12 +117,12 @@ fn join_server(handle: ServerHandle) -> Result<(), String> {
 #[test]
 fn download_url_includes_version_and_platform() -> TestResult {
     let _lock = env_lock();
-    for lang in silence_langs::ALL {
+    for lang in silence_langs::all() {
         let Some(id) = lang.grammar_pack_id() else {
             continue;
         };
         let url =
-            download_url(*lang, Platform::LinuxX86_64).ok_or("language must have a pack id")?;
+            download_url(lang, Platform::LinuxX86_64).ok_or("language must have a pack id")?;
         assert!(url.contains(&format!("/v{}/", env!("CARGO_PKG_VERSION"))));
         assert!(url.contains(&format!("silence-grammar-{id}-linux-x86_64.")));
     }

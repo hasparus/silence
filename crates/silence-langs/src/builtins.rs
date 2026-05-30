@@ -46,16 +46,3 @@ pub fn from_extension(ext: &str) -> Option<Lang> {
         .find(|b| b.extensions.contains(&e.as_str()))
         .map(|b| b.lang)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ALL;
-
-    #[test]
-    fn every_builtin_is_listed_in_all() {
-        for b in BUILTINS {
-            assert!(ALL.contains(&b.lang), "{:?} missing from ALL", b.lang);
-        }
-    }
-}

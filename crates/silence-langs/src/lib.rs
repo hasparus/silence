@@ -19,20 +19,29 @@ pub enum Lang {
     CSharp,
 }
 
-pub const ALL: &[Lang] = &[
-    Lang::TypeScript,
-    Lang::Tsx,
-    Lang::JavaScript,
-    Lang::Python,
-    Lang::Rust,
-    Lang::Go,
-    Lang::Toml,
-    Lang::Cpp,
-    Lang::Java,
-    Lang::Kotlin,
-    Lang::Swift,
-    Lang::CSharp,
-];
+pub struct LangMeta {
+    pub name: &'static str,
+    pub comment: CommentProfile,
+}
+
+impl LangMeta {
+    #[must_use]
+    pub fn query(self) -> &'static str {
+        self.comment.query()
+    }
+
+    #[must_use]
+    pub fn capture_names(self) -> &'static [&'static str] {
+        self.comment.capture_names()
+    }
+}
+
+pub fn all() -> impl Iterator<Item = Lang> + Clone {
+    builtins::BUILTINS
+        .iter()
+        .map(|b| b.lang)
+        .chain(optional_packs::PACKS.iter().map(|pack| pack.lang))
+}
 
 impl Lang {
     #[must_use]
@@ -61,28 +70,35 @@ impl Lang {
     }
 
     #[must_use]
+    pub fn meta(self) -> LangMeta {
+        if let Some(b) = builtins::get(self) {
+            LangMeta {
+                name: b.name,
+                comment: b.comment,
+            }
+        } else if let Some(p) = optional_packs::get(self) {
+            LangMeta {
+                name: p.name,
+                comment: p.comment,
+            }
+        } else {
+            unreachable!()
+        }
+    }
+
+    #[must_use]
     pub fn name(self) -> &'static str {
-        lang_meta(self).0
+        self.meta().name
     }
 
     #[must_use]
     pub fn comment_query(self) -> &'static str {
-        lang_meta(self).1.query()
+        self.meta().query()
     }
 
     #[must_use]
     pub fn comment_capture_names(self) -> &'static [&'static str] {
-        lang_meta(self).1.capture_names()
-    }
-}
-
-fn lang_meta(lang: Lang) -> (&'static str, CommentProfile) {
-    if let Some(b) = builtins::get(lang) {
-        (b.name, b.comment)
-    } else if let Some(p) = optional_packs::get(lang) {
-        (p.name, p.comment)
-    } else {
-        unreachable!()
+        self.meta().capture_names()
     }
 }
 
@@ -121,21 +137,16 @@ mod tests {
     }
 
     #[test]
-    fn all_is_exhaustive_and_unique() {
-        assert_eq!(ALL.len(), builtins::BUILTINS.len() + OPTIONAL_PACKS.len());
-        let set: HashSet<_> = ALL.iter().copied().collect();
-        assert_eq!(set.len(), ALL.len());
-        for b in builtins::BUILTINS {
-            assert!(set.contains(&b.lang));
-        }
-        for pack in OPTIONAL_PACKS {
-            assert!(set.contains(&pack.lang));
-        }
+    fn all_is_unique() {
+        let langs: Vec<_> = all().collect();
+        assert_eq!(langs.len(), builtins::BUILTINS.len() + OPTIONAL_PACKS.len());
+        let set: HashSet<_> = langs.iter().copied().collect();
+        assert_eq!(set.len(), langs.len());
     }
 
     #[test]
     fn every_lang_has_builtin_or_optional_metadata() {
-        for &lang in ALL {
+        for lang in all() {
             let has_builtin = builtins::get(lang).is_some();
             let has_optional = lang.optional_pack().is_some();
             assert!(
@@ -158,7 +169,7 @@ mod tests {
 
     #[test]
     fn every_optional_lang_has_a_pack() {
-        for &lang in ALL {
+        for lang in all() {
             if lang.is_builtin() {
                 continue;
             }

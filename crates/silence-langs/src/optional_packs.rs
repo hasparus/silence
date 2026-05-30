@@ -128,7 +128,6 @@ pub fn get(lang: Lang) -> Option<&'static OptionalPack> {
 mod tests {
     use super::*;
     use crate::builtins::BUILTINS;
-    use crate::ALL;
 
     #[test]
     fn packs_do_not_include_builtins() {
@@ -138,13 +137,6 @@ mod tests {
                 "{:?} must not be in PACKS",
                 pack.lang
             );
-        }
-    }
-
-    #[test]
-    fn every_optional_is_listed_in_all() {
-        for pack in PACKS {
-            assert!(ALL.contains(&pack.lang), "{:?} missing from ALL", pack.lang);
         }
     }
 

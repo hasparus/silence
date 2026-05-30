@@ -99,8 +99,6 @@ fn dev_dylib(lang: Lang) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use silence_langs::ALL;
-
     #[cfg(feature = "embed-optional")]
     #[test]
     fn embedded_covers_every_optional_pack() {
@@ -115,7 +113,7 @@ mod tests {
 
     #[test]
     fn every_grammar_loads_and_query_compiles() -> Result<(), Box<dyn std::error::Error>> {
-        for &lang in ALL {
+        for lang in silence_langs::all() {
             let grammar = ensure(lang).map_err(|e| format!("{}: {e}", lang.name()))?;
             let query = tree_sitter::Query::new(&grammar, lang.comment_query())
                 .map_err(|e| format!("query failed for {}: {e:?}", lang.name()))?;
