@@ -68,5 +68,6 @@ fn main() -> BuildResult<()> {
     verify_embed_deps(&manifest)?;
     write_embedded(&out_dir.join("embedded_optional.rs"))?;
     println!("cargo:rerun-if-changed=../silence-langs/src/registry.rs");
+    println!("cargo:rerun-if-changed=../silence-langs/src/lib.rs");
     Ok(())
 }

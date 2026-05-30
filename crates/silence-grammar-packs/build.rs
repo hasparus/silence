@@ -114,6 +114,7 @@ fn link_shared_msvc(
 }
 
 fn main() -> BuildResult<()> {
+    println!("cargo:rerun-if-changed=../silence-langs/src/registry.rs");
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     let ext = match env::var("CARGO_CFG_TARGET_OS")?.as_str() {
         "macos" => "dylib",
