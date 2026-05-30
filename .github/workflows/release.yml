@@ -72,11 +72,23 @@ jobs:
         run: |
           ext="${{ matrix.grammar_ext }}"
           platform="${{ matrix.grammar_platform }}"
-          for lib in target/release/libsilence_grammar_*.${ext}; do
+          expected=$(grep -c 'OptionalPack {' crates/silence-langs/src/optional_packs.rs)
+          shopt -s nullglob
+          libs=(target/release/libsilence_grammar_*.${ext})
+          if [ "${#libs[@]}" -ne "$expected" ]; then
+            echo "built ${#libs[@]} grammar dylibs, expected $expected"
+            exit 1
+          fi
+          for lib in "${libs[@]}"; do
             pack="${lib##*/libsilence_grammar_}"
             pack="${pack%.${ext}}"
             cp "$lib" "silence-grammar-${pack}-${platform}.${ext}"
           done
+          staged=(silence-grammar-*-${platform}.${ext})
+          if [ "${#staged[@]}" -ne "$expected" ]; then
+            echo "staged ${#staged[@]} grammar dylibs, expected $expected"
+            exit 1
+          fi
       - name: Smoke test
         run: ./"${{ matrix.asset }}" --help
       - name: Install rsign2
