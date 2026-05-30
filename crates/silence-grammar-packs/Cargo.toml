@@ -15,6 +15,7 @@ doctest = false
 bench = false
 
 [build-dependencies]
+silence-strip-langs = { path = "../silence-langs" }
 serde_json = "1"
 cc = "1"
 

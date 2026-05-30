@@ -19,6 +19,10 @@ embed-optional = [
     "dep:tree-sitter-rust",
     "dep:tree-sitter-go",
     "dep:tree-sitter-toml-ng",
+    "dep:tree-sitter-java",
+    "dep:tree-sitter-kotlin-ng",
+    "dep:tree-sitter-swift",
+    "dep:tree-sitter-c-sharp",
 ]
 
 [dependencies]
@@ -30,6 +34,10 @@ tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
 tree-sitter-toml-ng = { workspace = true, optional = true }
+tree-sitter-java = { workspace = true, optional = true }
+tree-sitter-kotlin-ng = { workspace = true, optional = true }
+tree-sitter-swift = { workspace = true, optional = true }
+tree-sitter-c-sharp = { workspace = true, optional = true }
 libloading = "0.8"
 thiserror = { workspace = true }
 ureq = { version = "3", default-features = true, features = ["rustls"] }

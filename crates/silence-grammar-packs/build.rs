@@ -1,33 +1,10 @@
 use std::env;
 use std::error::Error;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 type BuildResult<T> = Result<T, Box<dyn Error>>;
-
-struct Pack {
-    id: &'static str,
-    crate_name: &'static str,
-}
-
-const PACKS: &[Pack] = &[
-    Pack {
-        id: "rust",
-        crate_name: "tree-sitter-rust",
-    },
-    Pack {
-        id: "go",
-        crate_name: "tree-sitter-go",
-    },
-    Pack {
-        id: "toml",
-        crate_name: "tree-sitter-toml-ng",
-    },
-    Pack {
-        id: "cpp",
-        crate_name: "tree-sitter-cpp",
-    },
-];
 
 fn grammar_src_dir(crate_name: &str) -> BuildResult<PathBuf> {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
@@ -152,7 +129,7 @@ fn main() -> BuildResult<()> {
     };
     let dest_dir = target_dir.join(profile);
 
-    for pack in PACKS {
+    for pack in silence_langs::OPTIONAL_PACKS {
         let src_dir = grammar_src_dir(pack.crate_name)?;
         let parser = src_dir.join("parser.c");
         let scanner = src_dir.join("scanner.c");
@@ -171,7 +148,7 @@ fn main() -> BuildResult<()> {
 
         let dest = dest_dir.join(format!("libsilence_grammar_{}.{}", pack.id, ext));
         if dest != artifact {
-            std::fs::copy(&artifact, &dest)?;
+            fs::copy(&artifact, &dest)?;
         }
     }
     Ok(())

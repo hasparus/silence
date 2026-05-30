@@ -141,10 +141,10 @@ Env: `RUNS` (default 50), `WARMUP` (default 5), `SILENCE_BIN` (path to binary).
 
 ### adding a language
 
-Built-in: TypeScript/JavaScript, Python. Everything else (Rust, Go, C/C++, TOML, …)
+Built-in: TypeScript/JavaScript, Python. Everything else (Rust, Go, C/C++,
+TOML, Java, Kotlin, Swift, C#, …)
 downloads on first use into `~/.config/silence/grammars/` from GitHub release assets.
 
-1. add optional pack metadata in `silence-langs` (`grammar_pack_id`, extensions)
-2. add the pack to `silence-grammar-packs/build.rs` and release assets in `.github/workflows/release.yml`
-3. wire `silence-grammars` `ensure()`; `every_grammar_loads_and_query_compiles`
-   in `silence-strip-grammars` verifies query/ABI
+1. add an `OptionalPack` row in `crates/silence-langs/src/optional_packs.rs` and a matching `Lang` variant in `src/lib.rs`
+2. add the tree-sitter crate to the workspace `Cargo.toml`, an optional dependency + `embed-optional` feature entry in `silence-grammars/Cargo.toml`, and a match arm in `silence-grammars/src/embedded.rs`
+3. `every_grammar_loads_and_query_compiles` verifies query/ABI; release CI stages `target/release/libsilence_grammar_*` automatically

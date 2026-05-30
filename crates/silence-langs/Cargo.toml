@@ -4,7 +4,7 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 repository = { workspace = true }
-description = "Language/grammar registry for `silence` — TypeScript/JavaScript, Python built-in; Rust, Go, C/C++, TOML on demand."
+description = "Language/grammar registry for `silence` — TypeScript/JavaScript, Python built-in; Rust, Go, C/C++, TOML, Java, Kotlin, Swift, C# on demand."
 keywords = ["tree-sitter", "comments", "parser", "grammar"]
 categories = ["parser-implementations", "development-tools"]
 

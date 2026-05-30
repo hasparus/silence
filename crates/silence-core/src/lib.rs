@@ -460,6 +460,31 @@ mod tests {
     }
 
     #[test]
+    fn optional_pack_strip_smoke() -> TestResult {
+        const CASES: &[(Lang, &str, &str)] = &[
+            (
+                Lang::Java,
+                "class Main {\n  // x\n  void f() {}\n}\n",
+                "class Main {\n  void f() {}\n}\n",
+            ),
+            (
+                Lang::CSharp,
+                "class Main {\n  // x\n  void F() {}\n}\n",
+                "class Main {\n  void F() {}\n}\n",
+            ),
+            (
+                Lang::Swift,
+                "func main() {\n  // x\n  print(\"hi\")\n}\n",
+                "func main() {\n  print(\"hi\")\n}\n",
+            ),
+        ];
+        for &(lang, src, expected) in CASES {
+            assert_eq!(strip_default(src, lang)?, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn python_shebang_is_preserved() -> TestResult {
         let src = "#!/usr/bin/env python3\n# remove me\nx = 1\n";
         assert_eq!(

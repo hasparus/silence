@@ -1,4 +1,5 @@
 mod download;
+mod embedded;
 mod load;
 pub mod paths;
 mod platform;
@@ -54,7 +55,7 @@ fn resolve(lang: Lang) -> Result<Language, GrammarError> {
         return Ok(language);
     }
 
-    if let Some(language) = embedded_optional(lang) {
+    if let Some(language) = embedded::embedded_optional(lang) {
         return Ok(language);
     }
 
@@ -75,20 +76,6 @@ fn builtin(lang: Lang) -> Option<Language> {
         Lang::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         Lang::Tsx | Lang::JavaScript => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         Lang::Python => Some(tree_sitter_python::LANGUAGE.into()),
-        Lang::Rust | Lang::Go | Lang::Toml | Lang::Cpp => None,
-    }
-}
-
-fn embedded_optional(lang: Lang) -> Option<Language> {
-    match lang {
-        #[cfg(feature = "embed-optional")]
-        Lang::Rust => Some(tree_sitter_rust::LANGUAGE.into()),
-        #[cfg(feature = "embed-optional")]
-        Lang::Go => Some(tree_sitter_go::LANGUAGE.into()),
-        #[cfg(feature = "embed-optional")]
-        Lang::Toml => Some(tree_sitter_toml_ng::LANGUAGE.into()),
-        #[cfg(feature = "embed-optional")]
-        Lang::Cpp => Some(tree_sitter_cpp::LANGUAGE.into()),
         _ => None,
     }
 }

@@ -1,30 +1,42 @@
+mod optional_packs;
+
+pub use optional_packs::{CommentProfile, OptionalPack, PACKS as OPTIONAL_PACKS};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lang {
-    Rust,
     TypeScript,
     Tsx,
     JavaScript,
     Python,
+    Rust,
     Go,
     Toml,
     Cpp,
+    Java,
+    Kotlin,
+    Swift,
+    CSharp,
 }
+
+pub const ALL: &[Lang] = &[
+    Lang::TypeScript,
+    Lang::Tsx,
+    Lang::JavaScript,
+    Lang::Python,
+    Lang::Rust,
+    Lang::Go,
+    Lang::Toml,
+    Lang::Cpp,
+    Lang::Java,
+    Lang::Kotlin,
+    Lang::Swift,
+    Lang::CSharp,
+];
 
 impl Lang {
     #[must_use]
     pub fn from_extension(ext: &str) -> Option<Lang> {
-        let e = ext.to_ascii_lowercase();
-        Some(match e.as_str() {
-            "rs" => Lang::Rust,
-            "ts" | "mts" | "cts" => Lang::TypeScript,
-            "tsx" => Lang::Tsx,
-            "js" | "mjs" | "cjs" | "jsx" => Lang::JavaScript,
-            "py" | "pyi" => Lang::Python,
-            "go" => Lang::Go,
-            "toml" => Lang::Toml,
-            "c" | "h" | "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Lang::Cpp,
-            _ => return None,
-        })
+        optional_packs::from_extension(ext)
     }
 
     #[must_use]
@@ -36,80 +48,50 @@ impl Lang {
     }
 
     #[must_use]
+    pub fn optional_pack(self) -> Option<&'static OptionalPack> {
+        optional_packs::get(self)
+    }
+
+    #[must_use]
     pub fn grammar_pack_id(self) -> Option<&'static str> {
-        match self {
-            Lang::Rust => Some("rust"),
-            Lang::Go => Some("go"),
-            Lang::Toml => Some("toml"),
-            Lang::Cpp => Some("cpp"),
-            Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python => None,
-        }
+        self.optional_pack().map(|pack| pack.id)
     }
 
     #[must_use]
     pub fn grammar_symbol(self) -> Option<&'static str> {
-        match self {
-            Lang::Rust => Some("tree_sitter_rust"),
-            Lang::Go => Some("tree_sitter_go"),
-            Lang::Toml => Some("tree_sitter_toml"),
-            Lang::Cpp => Some("tree_sitter_cpp"),
-            Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python => None,
-        }
+        self.optional_pack().map(|pack| pack.symbol)
     }
 
     #[must_use]
     pub fn name(self) -> &'static str {
+        if let Some(pack) = self.optional_pack() {
+            return pack.name;
+        }
         match self {
-            Lang::Rust => "Rust",
             Lang::TypeScript => "TypeScript",
             Lang::Tsx => "TSX",
             Lang::JavaScript => "JavaScript",
             Lang::Python => "Python",
-            Lang::Go => "Go",
-            Lang::Toml => "TOML",
-            Lang::Cpp => "C/C++",
+            _ => unreachable!("built-in langs are exhaustive"),
         }
     }
 
     #[must_use]
     pub fn comment_query(self) -> &'static str {
-        match self {
-            Lang::Rust => "(line_comment) @line (block_comment) @block",
-            Lang::TypeScript
-            | Lang::Tsx
-            | Lang::JavaScript
-            | Lang::Python
-            | Lang::Go
-            | Lang::Toml
-            | Lang::Cpp => "(comment) @comment",
+        if let Some(pack) = self.optional_pack() {
+            return pack.comment.query();
         }
+        CommentProfile::Unified.query()
     }
 
     #[must_use]
     pub fn comment_capture_names(self) -> &'static [&'static str] {
-        match self {
-            Lang::Rust => &["line", "block"],
-            Lang::TypeScript
-            | Lang::Tsx
-            | Lang::JavaScript
-            | Lang::Python
-            | Lang::Go
-            | Lang::Toml
-            | Lang::Cpp => &["comment"],
+        if let Some(pack) = self.optional_pack() {
+            return pack.comment.capture_names();
         }
+        CommentProfile::Unified.capture_names()
     }
 }
-
-pub const ALL: &[Lang] = &[
-    Lang::Rust,
-    Lang::TypeScript,
-    Lang::Tsx,
-    Lang::JavaScript,
-    Lang::Python,
-    Lang::Go,
-    Lang::Toml,
-    Lang::Cpp,
-];
 
 #[cfg(test)]
 mod tests {
@@ -124,6 +106,11 @@ mod tests {
         assert_eq!(Lang::from_extension("ts"), Some(Lang::TypeScript));
         assert_eq!(Lang::from_extension("c"), Some(Lang::Cpp));
         assert_eq!(Lang::from_extension("cpp"), Some(Lang::Cpp));
+        assert_eq!(Lang::from_extension("java"), Some(Lang::Java));
+        assert_eq!(Lang::from_extension("kt"), Some(Lang::Kotlin));
+        assert_eq!(Lang::from_extension("kts"), Some(Lang::Kotlin));
+        assert_eq!(Lang::from_extension("swift"), Some(Lang::Swift));
+        assert_eq!(Lang::from_extension("cs"), Some(Lang::CSharp));
         assert_eq!(Lang::from_extension("unknown"), None);
     }
 
@@ -133,5 +120,30 @@ mod tests {
         assert!(Lang::TypeScript.is_builtin());
         assert!(!Lang::Rust.is_builtin());
         assert!(!Lang::Cpp.is_builtin());
+        assert!(!Lang::Java.is_builtin());
+        assert!(!Lang::Kotlin.is_builtin());
+        assert!(!Lang::Swift.is_builtin());
+        assert!(!Lang::CSharp.is_builtin());
+    }
+
+    #[test]
+    fn optional_pack_ids_are_unique() {
+        let mut ids = OPTIONAL_PACKS
+            .iter()
+            .map(|pack| pack.id)
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), OPTIONAL_PACKS.len());
+    }
+
+    #[test]
+    fn every_optional_lang_has_a_pack() {
+        for &lang in ALL {
+            if lang.is_builtin() {
+                continue;
+            }
+            assert!(lang.optional_pack().is_some(), "{lang:?} missing pack");
+        }
     }
 }

@@ -70,9 +70,12 @@ jobs:
           fi
       - name: Stage grammar dylibs
         run: |
-          for pack in rust go toml cpp; do
-            cp "target/release/libsilence_grammar_${pack}.${{ matrix.grammar_ext }}" \
-              "silence-grammar-${pack}-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}"
+          ext="${{ matrix.grammar_ext }}"
+          platform="${{ matrix.grammar_platform }}"
+          for lib in target/release/libsilence_grammar_*.${ext}; do
+            pack="${lib##*/libsilence_grammar_}"
+            pack="${pack%.${ext}}"
+            cp "$lib" "silence-grammar-${pack}-${platform}.${ext}"
           done
       - name: Smoke test
         run: ./"${{ matrix.asset }}" --help
@@ -92,8 +95,9 @@ jobs:
           test -n "$secret_key" || { echo "MINISIGN_SECRET_KEY missing"; exit 1; }
           key_file="$(mktemp)"
           printf '%b\n' "$secret_key" > "$key_file"
-          for pack in rust go toml cpp; do
-            asset="silence-grammar-${pack}-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}"
+          ext="${{ matrix.grammar_ext }}"
+          platform="${{ matrix.grammar_platform }}"
+          for asset in silence-grammar-*-${platform}.${ext}; do
             printf '%s\n' "$MINISIGN_PASSWORD" | rsign sign -s "$key_file" -W -x "${asset}.minisig" "$asset"
           done
           rm -f "$key_file"
@@ -101,14 +105,8 @@ jobs:
         with:
           files: |
             ${{ matrix.asset }}
-            silence-grammar-rust-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
-            silence-grammar-rust-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}.minisig
-            silence-grammar-go-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
-            silence-grammar-go-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}.minisig
-            silence-grammar-toml-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
-            silence-grammar-toml-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}.minisig
-            silence-grammar-cpp-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
-            silence-grammar-cpp-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}.minisig
+            silence-grammar-*-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
+            silence-grammar-*-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}.minisig
 
   publish-crates:
     name: crates.io

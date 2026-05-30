@@ -309,7 +309,7 @@ KEEP RULES
 
 LANGUAGES
   Built-in: TypeScript/JavaScript and Python.
-  On first use: Rust, Go, TOML, C/C++, and future packs (auto-downloaded).
+  On first use: Rust, Go, TOML, C/C++, Java, Kotlin, Swift, C#.
   Respects .gitignore and .silenceignore.
 
 AGENT GUIDANCE
