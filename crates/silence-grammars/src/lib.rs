@@ -72,18 +72,14 @@ fn resolve(lang: Lang) -> Result<Language, GrammarError> {
 }
 
 fn builtin(lang: Lang) -> Option<Language> {
+    if !lang.is_builtin() {
+        return None;
+    }
     match lang {
         Lang::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         Lang::Tsx | Lang::JavaScript => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         Lang::Python => Some(tree_sitter_python::LANGUAGE.into()),
-        Lang::Rust
-        | Lang::Go
-        | Lang::Toml
-        | Lang::Cpp
-        | Lang::Java
-        | Lang::Kotlin
-        | Lang::Swift
-        | Lang::CSharp => None,
+        _ => unreachable!("all builtins are handled above"),
     }
 }
 

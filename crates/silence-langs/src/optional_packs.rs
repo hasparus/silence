@@ -141,3 +141,36 @@ pub fn from_extension(ext: &str) -> Option<Lang> {
 pub fn get(lang: Lang) -> Option<&'static OptionalPack> {
     PACKS.iter().find(|pack| pack.lang == lang)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn packs_do_not_include_builtins() {
+        for pack in PACKS {
+            assert!(
+                !pack.lang.is_builtin(),
+                "{:?} must not be in PACKS",
+                pack.lang
+            );
+        }
+    }
+
+    #[test]
+    fn extension_keys_are_unique() {
+        let mut extensions = BUILTIN_EXTENSIONS
+            .iter()
+            .map(|&(ext, _)| ext)
+            .chain(
+                PACKS
+                    .iter()
+                    .flat_map(|pack| pack.extensions.iter().copied()),
+            )
+            .collect::<Vec<_>>();
+        extensions.sort_unstable();
+        let original_len = extensions.len();
+        extensions.dedup();
+        assert_eq!(extensions.len(), original_len);
+    }
+}
