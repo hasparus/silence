@@ -4,7 +4,7 @@ use super::Lang;
 pub enum CommentProfile {
     LineBlock,
     Unified,
-    Swift,
+    UnifiedMultiline,
 }
 
 impl CommentProfile {
@@ -13,7 +13,7 @@ impl CommentProfile {
         match self {
             Self::LineBlock => "(line_comment) @line (block_comment) @block",
             Self::Unified => "(comment) @comment",
-            Self::Swift => "(comment) @comment (multiline_comment) @block",
+            Self::UnifiedMultiline => "(comment) @comment (multiline_comment) @block",
         }
     }
 
@@ -22,7 +22,7 @@ impl CommentProfile {
         match self {
             Self::LineBlock => &["line", "block"],
             Self::Unified => &["comment"],
-            Self::Swift => &["comment", "block"],
+            Self::UnifiedMultiline => &["comment", "block"],
         }
     }
 }
@@ -99,7 +99,7 @@ pub const PACKS: &[OptionalPack] = &[
         symbol: "tree_sitter_swift",
         name: "Swift",
         extensions: &["swift"],
-        comment: CommentProfile::Swift,
+        comment: CommentProfile::UnifiedMultiline,
     },
     OptionalPack {
         lang: Lang::CSharp,

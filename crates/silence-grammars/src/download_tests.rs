@@ -123,7 +123,7 @@ fn download_url_includes_version_and_platform() -> TestResult {
         };
         let url =
             download_url(*lang, Platform::LinuxX86_64).ok_or("language must have a pack id")?;
-        assert!(url.contains("/v0.2.2/"));
+        assert!(url.contains(&format!("/v{}/", env!("CARGO_PKG_VERSION"))));
         assert!(url.contains(&format!("silence-grammar-{id}-linux-x86_64.")));
     }
     Ok(())

@@ -468,6 +468,11 @@ mod tests {
                 "class Main {\n  void f() {}\n}\n",
             ),
             (
+                Lang::Kotlin,
+                "fun main() {\n  // x\n  println(\"hi\")\n}\n",
+                "fun main() {\n  println(\"hi\")\n}\n",
+            ),
+            (
                 Lang::CSharp,
                 "class Main {\n  // x\n  void F() {}\n}\n",
                 "class Main {\n  void F() {}\n}\n",

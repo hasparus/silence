@@ -64,15 +64,23 @@ impl Lang {
 
     #[must_use]
     pub fn name(self) -> &'static str {
-        if let Some(pack) = self.optional_pack() {
-            return pack.name;
-        }
         match self {
             Lang::TypeScript => "TypeScript",
             Lang::Tsx => "TSX",
             Lang::JavaScript => "JavaScript",
             Lang::Python => "Python",
-            _ => unreachable!("built-in langs are exhaustive"),
+            Lang::Rust
+            | Lang::Go
+            | Lang::Toml
+            | Lang::Cpp
+            | Lang::Java
+            | Lang::Kotlin
+            | Lang::Swift
+            | Lang::CSharp => {
+                self.optional_pack()
+                    .expect("optional langs have metadata")
+                    .name
+            }
         }
     }
 

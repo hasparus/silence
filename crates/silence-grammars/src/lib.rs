@@ -76,7 +76,14 @@ fn builtin(lang: Lang) -> Option<Language> {
         Lang::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         Lang::Tsx | Lang::JavaScript => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         Lang::Python => Some(tree_sitter_python::LANGUAGE.into()),
-        _ => None,
+        Lang::Rust
+        | Lang::Go
+        | Lang::Toml
+        | Lang::Cpp
+        | Lang::Java
+        | Lang::Kotlin
+        | Lang::Swift
+        | Lang::CSharp => None,
     }
 }
 
@@ -97,6 +104,18 @@ fn dev_dylib(lang: Lang) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use silence_langs::ALL;
+
+    #[cfg(feature = "embed-optional")]
+    #[test]
+    fn embedded_covers_every_optional_pack() {
+        for pack in silence_langs::OPTIONAL_PACKS {
+            assert!(
+                embedded::embedded_optional(pack.lang).is_some(),
+                "{:?} missing embedded grammar",
+                pack.lang
+            );
+        }
+    }
 
     #[test]
     fn every_grammar_loads_and_query_compiles() -> Result<(), Box<dyn std::error::Error>> {
