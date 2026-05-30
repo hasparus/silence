@@ -52,9 +52,9 @@ jobs:
       run:
         shell: ${{ matrix.shell }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.1
       - name: Build
         run: |
           if [ -n "${{ matrix.linker_env || '' }}" ]; then
@@ -97,7 +97,7 @@ jobs:
             printf '%s\n' "$MINISIGN_PASSWORD" | rsign sign -s "$key_file" -W -x "${asset}.minisig" "$asset"
           done
           rm -f "$key_file"
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ matrix.asset }}
@@ -117,11 +117,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.1
 
       - name: Publish workspace crates
         shell: bash
