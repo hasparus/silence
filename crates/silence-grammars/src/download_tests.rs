@@ -118,7 +118,7 @@ fn join_server(handle: ServerHandle) -> Result<(), String> {
 fn download_url_includes_version_and_platform() -> TestResult {
     let _lock = env_lock();
     let url = download_url(Lang::Rust, Platform::LinuxX86_64).ok_or("rust must have a pack id")?;
-    assert!(url.contains("/v0.2.1/"));
+    assert!(url.contains("/v0.2.2/"));
     assert!(url.contains("silence-grammar-rust-linux-x86_64."));
     Ok(())
 }
