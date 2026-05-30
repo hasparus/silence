@@ -36,7 +36,7 @@ jobs:
             grammar_platform: darwin-aarch64
             grammar_ext: dylib
             shell: bash
-          - os: windows-latest
+          - os: windows-2025-vs2026
             asset: silence-windows-x86_64.exe
             grammar_platform: windows-x86_64
             grammar_ext: dll
