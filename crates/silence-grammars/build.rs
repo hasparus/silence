@@ -15,8 +15,9 @@ fn verify_embed_deps(manifest: &str) -> BuildResult<()> {
         let Some(pack) = spec.pack else {
             continue;
         };
-        let needle = format!("{} = ", pack.crate_name);
-        if !manifest.contains(&needle) {
+        let inline = format!("{} = ", pack.crate_name);
+        let table = format!("[dependencies.{}]", pack.crate_name);
+        if !manifest.contains(&inline) && !manifest.contains(&table) {
             return Err(format!(
                 "embed-optional missing Cargo.toml dep for {}",
                 pack.crate_name

@@ -27,7 +27,7 @@ embed-optional = [
 ]
 
 [build-dependencies]
-silence-strip-langs = { path = "../silence-langs" }
+silence-strip-langs = { workspace = true }
 
 [dependencies]
 silence-strip-langs = { workspace = true }
