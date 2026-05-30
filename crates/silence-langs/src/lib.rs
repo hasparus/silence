@@ -69,18 +69,14 @@ impl Lang {
             Lang::Tsx => "TSX",
             Lang::JavaScript => "JavaScript",
             Lang::Python => "Python",
-            Lang::Rust
-            | Lang::Go
-            | Lang::Toml
-            | Lang::Cpp
-            | Lang::Java
-            | Lang::Kotlin
-            | Lang::Swift
-            | Lang::CSharp => {
-                self.optional_pack()
-                    .expect("optional langs have metadata")
-                    .name
-            }
+            Lang::Rust => "Rust",
+            Lang::Go => "Go",
+            Lang::Toml => "TOML",
+            Lang::Cpp => "C/C++",
+            Lang::Java => "Java",
+            Lang::Kotlin => "Kotlin",
+            Lang::Swift => "Swift",
+            Lang::CSharp => "C#",
         }
     }
 

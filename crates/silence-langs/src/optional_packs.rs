@@ -133,7 +133,7 @@ pub fn from_extension(ext: &str) -> Option<Lang> {
         .or_else(|| {
             PACKS
                 .iter()
-                .find(|pack| pack.extensions.iter().any(|x| *x == e.as_str()))
+                .find(|pack| pack.extensions.contains(&e.as_str()))
                 .map(|pack| pack.lang)
         })
 }
