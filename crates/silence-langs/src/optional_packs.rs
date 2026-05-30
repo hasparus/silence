@@ -112,30 +112,12 @@ pub const PACKS: &[OptionalPack] = &[
     },
 ];
 
-const BUILTIN_EXTENSIONS: &[(&str, Lang)] = &[
-    ("ts", Lang::TypeScript),
-    ("mts", Lang::TypeScript),
-    ("cts", Lang::TypeScript),
-    ("tsx", Lang::Tsx),
-    ("js", Lang::JavaScript),
-    ("mjs", Lang::JavaScript),
-    ("cjs", Lang::JavaScript),
-    ("jsx", Lang::JavaScript),
-    ("py", Lang::Python),
-    ("pyi", Lang::Python),
-];
-
 pub fn from_extension(ext: &str) -> Option<Lang> {
     let e = ext.to_ascii_lowercase();
-    BUILTIN_EXTENSIONS
+    PACKS
         .iter()
-        .find_map(|&(x, lang)| (x == e.as_str()).then_some(lang))
-        .or_else(|| {
-            PACKS
-                .iter()
-                .find(|pack| pack.extensions.contains(&e.as_str()))
-                .map(|pack| pack.lang)
-        })
+        .find(|pack| pack.extensions.contains(&e.as_str()))
+        .map(|pack| pack.lang)
 }
 
 pub fn get(lang: Lang) -> Option<&'static OptionalPack> {
@@ -145,6 +127,8 @@ pub fn get(lang: Lang) -> Option<&'static OptionalPack> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builtins::BUILTINS;
+    use crate::ALL;
 
     #[test]
     fn packs_do_not_include_builtins() {
@@ -158,10 +142,17 @@ mod tests {
     }
 
     #[test]
+    fn every_optional_is_listed_in_all() {
+        for pack in PACKS {
+            assert!(ALL.contains(&pack.lang), "{:?} missing from ALL", pack.lang);
+        }
+    }
+
+    #[test]
     fn extension_keys_are_unique() {
-        let mut extensions = BUILTIN_EXTENSIONS
+        let mut extensions = BUILTINS
             .iter()
-            .map(|&(ext, _)| ext)
+            .flat_map(|b| b.extensions.iter().copied())
             .chain(
                 PACKS
                     .iter()

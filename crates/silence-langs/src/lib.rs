@@ -1,3 +1,4 @@
+mod builtins;
 mod optional_packs;
 
 pub use optional_packs::{CommentProfile, OptionalPack, PACKS as OPTIONAL_PACKS};
@@ -36,15 +37,12 @@ pub const ALL: &[Lang] = &[
 impl Lang {
     #[must_use]
     pub fn from_extension(ext: &str) -> Option<Lang> {
-        optional_packs::from_extension(ext)
+        builtins::from_extension(ext).or_else(|| optional_packs::from_extension(ext))
     }
 
     #[must_use]
     pub fn is_builtin(self) -> bool {
-        matches!(
-            self,
-            Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python
-        )
+        builtins::get(self).is_some()
     }
 
     #[must_use]
@@ -64,38 +62,34 @@ impl Lang {
 
     #[must_use]
     pub fn name(self) -> &'static str {
-        if let Some(pack) = self.optional_pack() {
-            return pack.name;
-        }
-        match self {
-            Lang::TypeScript => "TypeScript",
-            Lang::Tsx => "TSX",
-            Lang::JavaScript => "JavaScript",
-            Lang::Python => "Python",
-            _ => unreachable!("optional langs returned above"),
-        }
+        lang_meta(self).0
     }
 
     #[must_use]
     pub fn comment_query(self) -> &'static str {
-        if let Some(pack) = self.optional_pack() {
-            return pack.comment.query();
-        }
-        CommentProfile::Unified.query()
+        lang_meta(self).1.query()
     }
 
     #[must_use]
     pub fn comment_capture_names(self) -> &'static [&'static str] {
-        if let Some(pack) = self.optional_pack() {
-            return pack.comment.capture_names();
-        }
-        CommentProfile::Unified.capture_names()
+        lang_meta(self).1.capture_names()
+    }
+}
+
+fn lang_meta(lang: Lang) -> (&'static str, CommentProfile) {
+    if let Some(b) = builtins::get(lang) {
+        (b.name, b.comment)
+    } else if let Some(p) = optional_packs::get(lang) {
+        (p.name, p.comment)
+    } else {
+        unreachable!()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn extension_resolution() {
@@ -124,6 +118,31 @@ mod tests {
         assert!(!Lang::Kotlin.is_builtin());
         assert!(!Lang::Swift.is_builtin());
         assert!(!Lang::CSharp.is_builtin());
+    }
+
+    #[test]
+    fn all_is_exhaustive_and_unique() {
+        assert_eq!(ALL.len(), builtins::BUILTINS.len() + OPTIONAL_PACKS.len());
+        let set: HashSet<_> = ALL.iter().copied().collect();
+        assert_eq!(set.len(), ALL.len());
+        for b in builtins::BUILTINS {
+            assert!(set.contains(&b.lang));
+        }
+        for pack in OPTIONAL_PACKS {
+            assert!(set.contains(&pack.lang));
+        }
+    }
+
+    #[test]
+    fn every_lang_has_builtin_or_optional_metadata() {
+        for &lang in ALL {
+            let has_builtin = builtins::get(lang).is_some();
+            let has_optional = lang.optional_pack().is_some();
+            assert!(
+                has_builtin ^ has_optional,
+                "{lang:?} must be exactly one of builtin or optional"
+            );
+        }
     }
 
     #[test]
