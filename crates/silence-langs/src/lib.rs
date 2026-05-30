@@ -1,7 +1,8 @@
-mod builtins;
-mod optional_packs;
+mod comment;
+mod registry;
 
-pub use optional_packs::{CommentProfile, OptionalPack, PACKS as OPTIONAL_PACKS};
+pub use comment::CommentProfile;
+pub use registry::{LangSpec, PackFields, LANGS, OPTIONAL_PACK_COUNT};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lang {
@@ -19,86 +20,54 @@ pub enum Lang {
     CSharp,
 }
 
-pub struct LangMeta {
-    pub name: &'static str,
-    pub comment: CommentProfile,
-}
-
-impl LangMeta {
-    #[must_use]
-    pub fn query(self) -> &'static str {
-        self.comment.query()
-    }
-
-    #[must_use]
-    pub fn capture_names(self) -> &'static [&'static str] {
-        self.comment.capture_names()
-    }
-}
-
 pub fn all() -> impl Iterator<Item = Lang> + Clone {
-    builtins::BUILTINS
-        .iter()
-        .map(|b| b.lang)
-        .chain(optional_packs::PACKS.iter().map(|pack| pack.lang))
+    registry::LANGS.iter().map(|spec| spec.lang)
 }
 
 impl Lang {
     #[must_use]
     pub fn from_extension(ext: &str) -> Option<Lang> {
-        builtins::from_extension(ext).or_else(|| optional_packs::from_extension(ext))
+        registry::from_extension(ext)
+    }
+
+    #[must_use]
+    pub fn spec(self) -> &'static LangSpec {
+        registry::get(self).expect("every Lang variant has a registry entry")
     }
 
     #[must_use]
     pub fn is_builtin(self) -> bool {
-        builtins::get(self).is_some()
+        self.spec().pack.is_none()
     }
 
     #[must_use]
-    pub fn optional_pack(self) -> Option<&'static OptionalPack> {
-        optional_packs::get(self)
+    pub fn pack(self) -> Option<PackFields> {
+        self.spec().pack
     }
 
     #[must_use]
     pub fn grammar_pack_id(self) -> Option<&'static str> {
-        self.optional_pack().map(|pack| pack.id)
+        self.pack().map(|pack| pack.id)
     }
 
     #[must_use]
     pub fn grammar_symbol(self) -> Option<&'static str> {
-        self.optional_pack().map(|pack| pack.symbol)
-    }
-
-    #[must_use]
-    pub fn meta(self) -> LangMeta {
-        if let Some(b) = builtins::get(self) {
-            LangMeta {
-                name: b.name,
-                comment: b.comment,
-            }
-        } else if let Some(p) = optional_packs::get(self) {
-            LangMeta {
-                name: p.name,
-                comment: p.comment,
-            }
-        } else {
-            unreachable!()
-        }
+        self.pack().map(|pack| pack.symbol)
     }
 
     #[must_use]
     pub fn name(self) -> &'static str {
-        self.meta().name
+        self.spec().name
     }
 
     #[must_use]
     pub fn comment_query(self) -> &'static str {
-        self.meta().query()
+        self.spec().comment.query()
     }
 
     #[must_use]
     pub fn comment_capture_names(self) -> &'static [&'static str] {
-        self.meta().capture_names()
+        self.spec().comment.capture_names()
     }
 }
 
@@ -106,6 +75,32 @@ impl Lang {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    const ALL_VARIANTS: [Lang; 12] = [
+        Lang::TypeScript,
+        Lang::Tsx,
+        Lang::JavaScript,
+        Lang::Python,
+        Lang::Rust,
+        Lang::Go,
+        Lang::Toml,
+        Lang::Cpp,
+        Lang::Java,
+        Lang::Kotlin,
+        Lang::Swift,
+        Lang::CSharp,
+    ];
+
+    #[test]
+    fn registry_covers_all_variants() {
+        assert_eq!(ALL_VARIANTS.len(), LANGS.len());
+        for lang in ALL_VARIANTS {
+            assert!(
+                registry::get(lang).is_some(),
+                "{lang:?} missing registry entry"
+            );
+        }
+    }
 
     #[test]
     fn extension_resolution() {
@@ -139,32 +134,15 @@ mod tests {
     #[test]
     fn all_is_unique() {
         let langs: Vec<_> = all().collect();
-        assert_eq!(langs.len(), builtins::BUILTINS.len() + OPTIONAL_PACKS.len());
+        assert_eq!(langs.len(), LANGS.len());
         let set: HashSet<_> = langs.iter().copied().collect();
         assert_eq!(set.len(), langs.len());
     }
 
     #[test]
-    fn every_lang_has_builtin_or_optional_metadata() {
-        for lang in all() {
-            let has_builtin = builtins::get(lang).is_some();
-            let has_optional = lang.optional_pack().is_some();
-            assert!(
-                has_builtin ^ has_optional,
-                "{lang:?} must be exactly one of builtin or optional"
-            );
-        }
-    }
-
-    #[test]
-    fn optional_pack_ids_are_unique() {
-        let mut ids = OPTIONAL_PACKS
-            .iter()
-            .map(|pack| pack.id)
-            .collect::<Vec<_>>();
-        ids.sort_unstable();
-        ids.dedup();
-        assert_eq!(ids.len(), OPTIONAL_PACKS.len());
+    fn optional_pack_count_matches_registry() {
+        let n = LANGS.iter().filter(|spec| spec.pack.is_some()).count();
+        assert_eq!(n, OPTIONAL_PACK_COUNT);
     }
 
     #[test]
@@ -173,7 +151,7 @@ mod tests {
             if lang.is_builtin() {
                 continue;
             }
-            assert!(lang.optional_pack().is_some(), "{lang:?} missing pack");
+            assert!(lang.pack().is_some(), "{lang:?} missing pack");
         }
     }
 }

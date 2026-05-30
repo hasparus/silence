@@ -72,7 +72,7 @@ jobs:
         run: |
           ext="${{ matrix.grammar_ext }}"
           platform="${{ matrix.grammar_platform }}"
-          expected=$(grep -c 'OptionalPack {' crates/silence-langs/src/optional_packs.rs)
+          expected=$(cargo run -q -p silence-strip-langs --bin pack_count)
           shopt -s nullglob
           libs=(target/release/libsilence_grammar_*.${ext})
           if [ "${#libs[@]}" -ne "$expected" ]; then

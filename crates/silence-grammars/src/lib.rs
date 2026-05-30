@@ -102,11 +102,14 @@ mod tests {
     #[cfg(feature = "embed-optional")]
     #[test]
     fn embedded_covers_every_optional_pack() {
-        for pack in silence_langs::OPTIONAL_PACKS {
+        for spec in silence_langs::LANGS {
+            let Some(_) = spec.pack else {
+                continue;
+            };
             assert!(
-                embedded::embedded_optional(pack.lang).is_some(),
+                embedded::embedded_optional(spec.lang).is_some(),
                 "{:?} missing embedded grammar",
-                pack.lang
+                spec.lang
             );
         }
     }

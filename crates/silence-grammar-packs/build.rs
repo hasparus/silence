@@ -129,7 +129,10 @@ fn main() -> BuildResult<()> {
     };
     let dest_dir = target_dir.join(profile);
 
-    for pack in silence_langs::OPTIONAL_PACKS {
+    for spec in silence_langs::LANGS {
+        let Some(pack) = spec.pack else {
+            continue;
+        };
         let src_dir = grammar_src_dir(pack.crate_name)?;
         let parser = src_dir.join("parser.c");
         let scanner = src_dir.join("scanner.c");

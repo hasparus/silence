@@ -7,6 +7,7 @@ repository = { workspace = true }
 description = "Built-in and on-demand tree-sitter grammars for silence"
 keywords = ["tree-sitter", "grammar"]
 categories = ["parser-implementations"]
+build = "build.rs"
 
 [lib]
 name = "silence_grammars"
@@ -24,6 +25,9 @@ embed-optional = [
     "dep:tree-sitter-swift",
     "dep:tree-sitter-c-sharp",
 ]
+
+[build-dependencies]
+silence-strip-langs = { path = "../silence-langs" }
 
 [dependencies]
 silence-strip-langs = { workspace = true }
