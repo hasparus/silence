@@ -34,9 +34,9 @@ esac
 # --- pick version ---
 if [ -z "${VERSION:-}" ]; then
   echo "fetching latest release..."
-  VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-    | grep -m1 '"tag_name":' \
-    | cut -d'"' -f4)
+  release_json=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")
+  VERSION=$(printf '%s\n' "$release_json" \
+    | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')
   [ -n "$VERSION" ] || err "could not determine the latest version"
 fi
 echo "version: $VERSION"
