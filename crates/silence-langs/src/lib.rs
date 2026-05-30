@@ -32,7 +32,7 @@ impl Lang {
 
     #[must_use]
     pub fn spec(self) -> &'static LangSpec {
-        registry::get(self).expect("every Lang variant has a registry entry")
+        registry::get(self)
     }
 
     #[must_use]
@@ -95,10 +95,7 @@ mod tests {
     fn registry_covers_all_variants() {
         assert_eq!(ALL_VARIANTS.len(), LANGS.len());
         for lang in ALL_VARIANTS {
-            assert!(
-                registry::get(lang).is_some(),
-                "{lang:?} missing registry entry"
-            );
+            assert_eq!(registry::get(lang).lang, lang);
         }
     }
 

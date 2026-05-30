@@ -1,5 +1,6 @@
 use std::env;
 use std::error::Error;
+use std::fmt::Write;
 use std::fs;
 use std::path::PathBuf;
 
@@ -33,10 +34,11 @@ fn write_embedded(out: &PathBuf) -> BuildResult<()> {
             continue;
         };
         let module = crate_module(pack.crate_name);
-        arms.push_str(&format!(
-            "            Lang::{:?} => Some({module}::LANGUAGE.into()),\n",
+        writeln!(
+            arms,
+            "            Lang::{:?} => Some({module}::LANGUAGE.into()),",
             spec.lang
-        ));
+        )?;
     }
 
     let src = format!(

@@ -150,8 +150,25 @@ const fn count_optional(specs: &[LangSpec]) -> usize {
     n
 }
 
-pub fn get(lang: Lang) -> Option<&'static LangSpec> {
-    LANGS.iter().find(|spec| spec.lang == lang)
+pub fn get(lang: Lang) -> &'static LangSpec {
+    match lang {
+        Lang::TypeScript => by_index(0),
+        Lang::Tsx => by_index(1),
+        Lang::JavaScript => by_index(2),
+        Lang::Python => by_index(3),
+        Lang::Rust => by_index(4),
+        Lang::Go => by_index(5),
+        Lang::Toml => by_index(6),
+        Lang::Cpp => by_index(7),
+        Lang::Java => by_index(8),
+        Lang::Kotlin => by_index(9),
+        Lang::Swift => by_index(10),
+        Lang::CSharp => by_index(11),
+    }
+}
+
+fn by_index(index: usize) -> &'static LangSpec {
+    &LANGS[index]
 }
 
 pub fn from_extension(ext: &str) -> Option<Lang> {
