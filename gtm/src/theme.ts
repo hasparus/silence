@@ -21,4 +21,4 @@ export const gh = {
   brand: '#1f2328',
 } as const;
 
-export const FONT = 'CommitMono';
+export const FONT = 'ComicMono';
