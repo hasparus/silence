@@ -30,6 +30,7 @@ const T = {
   king: 114,
   cargo: 150,
   hook: 176,
+  strip: 196,
   fire: 214,
 };
 const XFADE = 8;
@@ -180,6 +181,8 @@ export const Meme: React.FC<MemeProps> = (props) => {
   const ct = typed(frame, T.cargo, cargoText.length);
   const hookText = 'silence hook install';
   const ht = typed(frame, T.hook, hookText.length);
+  const stripText = 'silence strip add.ts';
+  const st = typed(frame, T.strip, stripText.length);
   const terminalPop = usePop(T.cargo);
 
   return (
@@ -275,6 +278,13 @@ export const Meme: React.FC<MemeProps> = (props) => {
                   {ht < hookText.length ? <Caret /> : null}
                 </div>
               )}
+              {frame >= T.strip && (
+                <div>
+                  <span style={{color: '#7ee787'}}>$ </span>
+                  {stripText.slice(0, st)}
+                  {st < stripText.length ? <Caret /> : null}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -308,7 +318,7 @@ const BurningComment: React.FC = () => {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
-  const layerFade = interpolate(frame, [COLLAPSE, COLLAPSE + 6], [1, 0], {
+  const layerFade = interpolate(frame, [COLLAPSE - 1, COLLAPSE + 3], [1, 0], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
