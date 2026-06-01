@@ -1,13 +1,17 @@
 import React from 'react';
 import {CalculateMetadataFunction, Composition} from 'remotion';
 import {Meme, MemeProps, TOTAL} from './Meme';
-import {CODE_CLEAN, CODE_DIRTY, hl} from './highlight';
+import {CODE_BUGGY, CODE_DIRTY, CODE_CLEAN, hl} from './highlight';
 import {fontsReady} from './fonts';
 
 const calculateMetadata: CalculateMetadataFunction<MemeProps> = async () => {
   await fontsReady;
-  const [clean, dirty] = await Promise.all([hl(CODE_CLEAN), hl(CODE_DIRTY)]);
-  return {props: {clean, dirty}};
+  const [buggy, dirty, clean] = await Promise.all([
+    hl(CODE_BUGGY),
+    hl(CODE_DIRTY),
+    hl(CODE_CLEAN),
+  ]);
+  return {props: {buggy, dirty, clean}};
 };
 
 export const RemotionRoot: React.FC = () => {
