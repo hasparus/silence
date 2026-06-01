@@ -78,6 +78,7 @@ pub fn collect_paths(root: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
     }
     let mut builder = WalkBuilder::new(root);
     builder.standard_filters(true);
+    builder.require_git(false);
     builder.add_custom_ignore_filename(".silenceignore");
     let global = home_dir().join(".config/.silenceignore");
     if global.is_file() {
