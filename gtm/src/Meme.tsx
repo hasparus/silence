@@ -2,6 +2,7 @@ import React from 'react';
 import {
   AbsoluteFill,
   Img,
+  Sequence,
   interpolate,
   spring,
   staticFile,
@@ -10,6 +11,7 @@ import {
 } from 'remotion';
 import {HighlightedCode} from 'codehike/code';
 import {StaticCode} from './StaticCode';
+import {CodeTransition} from './CodeTransition';
 import {FireBurn} from './FireBurn';
 import {gh, FONT} from './theme';
 
@@ -31,10 +33,11 @@ const T = {
   fire: 214,
 };
 const XFADE = 8;
-const BURN = 46;
-const SWAP = T.fire + Math.round(BURN * 0.6);
+const BURNHOLD = 66;
+const BURN = BURNHOLD + 30;
+const COLLAPSE = T.fire + BURNHOLD;
 const CPS = 1.5;
-export const TOTAL = T.fire + BURN + 28;
+export const TOTAL = COLLAPSE + 38;
 
 const LINE = Math.round(30 * 1.5);
 const CODE_LINES = 5;
@@ -142,10 +145,14 @@ const CodeArea: React.FC<MemeProps> = ({buggy, dirty, clean}) => {
         </div>
       </div>
     );
-  } else if (frame < SWAP) {
+  } else if (frame < COLLAPSE) {
     content = <StaticCode code={dirty} />;
   } else {
-    content = <StaticCode code={clean} />;
+    content = (
+      <Sequence from={COLLAPSE} layout="none">
+        <CodeTransition oldCode={dirty} newCode={clean} durationInFrames={20} />
+      </Sequence>
+    );
   }
   return <div style={{minHeight}}>{content}</div>;
 };
@@ -273,7 +280,7 @@ export const Meme: React.FC<MemeProps> = (props) => {
         </div>
       </div>
 
-      {}
+      <BurningComment />
       <FireBurn
         start={T.fire}
         duration={BURN}
@@ -283,6 +290,79 @@ export const Meme: React.FC<MemeProps> = (props) => {
         height={LINE}
       />
     </AbsoluteFill>
+  );
+};
+
+const COMMENT = '  // Adds numbers, does not subtract. Returns.';
+const CHAR_W = 16.3;
+const COMMENT_ROW_Y = PAD_TOP + 2 * LINE + LINE / 2 - 2;
+const seed = (i: number) => {
+  const x = Math.sin(i * 91.7 + 13.3) * 43758.5453;
+  return x - Math.floor(x);
+};
+
+const BurningComment: React.FC = () => {
+  const frame = useCurrentFrame();
+  if (frame < T.fire || frame > COLLAPSE + 6) return null;
+  const prog = interpolate(frame, [T.fire, T.fire + BURNHOLD - 8], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  const layerFade = interpolate(frame, [COLLAPSE, COLLAPSE + 6], [1, 0], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+
+  return (
+    <div style={{position: 'absolute', inset: 0, pointerEvents: 'none', opacity: layerFade}}>
+      {COMMENT.split('').map((ch, i) => {
+        if (!/[A-Za-z]/.test(ch)) return null;
+        const threshold = 0.08 + seed(i) * 0.82;
+        const ip = interpolate(prog, [threshold, threshold + 0.05], [0, 1], {
+          extrapolateLeft: 'clamp',
+          extrapolateRight: 'clamp',
+        });
+        if (ip <= 0) return null;
+        const cx = PAD_LEFT + (i + 0.5) * CHAR_W;
+        const flick = 0.86 + 0.14 * Math.sin(frame * 0.7 + i * 1.7);
+        return (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              left: cx,
+              top: COMMENT_ROW_Y,
+              transform: 'translate(-50%, -50%)',
+            }}
+          >
+            {}
+            <div
+              style={{
+                position: 'absolute',
+                left: '50%',
+                top: '50%',
+                width: CHAR_W + 4,
+                height: 32,
+                background: gh.bg,
+                transform: 'translate(-50%, -50%)',
+                opacity: ip,
+              }}
+            />
+            <span
+              style={{
+                position: 'relative',
+                display: 'block',
+                fontSize: 25,
+                lineHeight: 1,
+                transform: `scale(${ip * flick})`,
+              }}
+            >
+              🔥
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 };
 

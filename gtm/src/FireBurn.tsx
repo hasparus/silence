@@ -77,27 +77,27 @@ export const FireBurn: React.FC<{
     );
   });
 
-  const smokeOp = interpolate(p, [0.18, 0.45, 0.82, 1], [0, 0.6, 0.55, 0], {
+  const smokeOp = interpolate(p, [0.2, 0.5, 0.85, 1], [0, 0.22, 0.16, 0], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
-  const NS = 8;
+  const NS = 5;
   const smoke = Array.from({length: NS}).map((_, i) => {
     const sx = left + (i / (NS - 1)) * width;
-    const rise = p * 70;
-    const d = 150 + rand(i) * 90;
+    const rise = p * 130;
+    const d = 70 + rand(i) * 50;
     return (
       <div
         key={'s' + i}
         style={{
           position: 'absolute',
           left: sx - d / 2,
-          top: baseline + 18 - rise - d / 2,
+          top: baseline - 30 - rise - d / 2,
           width: d,
           height: d,
           borderRadius: 99,
-          background: '#6b7177',
-          filter: 'blur(26px)',
+          background: '#9aa0a6',
+          filter: 'blur(20px)',
           opacity: smokeOp * (0.6 + rand(i + 1) * 0.4),
         }}
       />
