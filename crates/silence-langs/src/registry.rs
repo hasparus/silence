@@ -134,6 +134,17 @@ pub const LANGS: &[LangSpec] = &[
             symbol: "tree_sitter_c_sharp",
         }),
     },
+    LangSpec {
+        lang: Lang::Css,
+        name: "CSS",
+        extensions: &["css"],
+        comment: CommentProfile::Unified,
+        pack: Some(PackFields {
+            id: "css",
+            crate_name: "tree-sitter-css",
+            symbol: "tree_sitter_css",
+        }),
+    },
 ];
 
 pub const OPTIONAL_PACK_COUNT: usize = count_optional(LANGS);
@@ -164,6 +175,7 @@ pub fn get(lang: Lang) -> &'static LangSpec {
         Lang::Kotlin => by_index(9),
         Lang::Swift => by_index(10),
         Lang::CSharp => by_index(11),
+        Lang::Css => by_index(12),
     }
 }
 

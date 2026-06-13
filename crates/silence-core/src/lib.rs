@@ -482,10 +482,39 @@ mod tests {
                 "func main() {\n  // x\n  print(\"hi\")\n}\n",
                 "func main() {\n  print(\"hi\")\n}\n",
             ),
+            (
+                Lang::Css,
+                ".a {\n  /* x */\n  color: red;\n}\n",
+                ".a {\n  color: red;\n}\n",
+            ),
         ];
         for &(lang, src, expected) in CASES {
             assert_eq!(strip_default(src, lang)?, expected);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn css_inline_block_comment_trims_to_declaration() -> TestResult {
+        let src = ".a { color: red; /* strip me */ }\n";
+        assert_eq!(strip_default(src, Lang::Css)?, ".a { color: red; }\n");
+        Ok(())
+    }
+
+    #[test]
+    fn css_url_with_comment_marker_is_safe() -> TestResult {
+        let src = ".a {\n  background: url(\"http://example.com/*x*/\");\n  /* gone */\n}\n";
+        assert_eq!(
+            strip_default(src, Lang::Css)?,
+            ".a {\n  background: url(\"http://example.com/*x*/\");\n}\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn css_multiline_block_comment_fully_removed() -> TestResult {
+        let src = ".a {}\n/* line one\n   line two */\n.b {}\n";
+        assert_eq!(strip_default(src, Lang::Css)?, ".a {}\n.b {}\n");
         Ok(())
     }
 
