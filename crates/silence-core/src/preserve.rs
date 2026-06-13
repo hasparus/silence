@@ -9,6 +9,8 @@ pub const DEFAULT_PRESERVE_PATTERNS: &[&str] = &[
     "NOTE:",
     "eslint-",
     "prettier-ignore",
+    "stylelint-",
+    "postcss-",
     "noqa",
     "type: ignore",
     "pylint:",
@@ -195,6 +197,15 @@ mod tests {
         assert!(c.should_preserve("//go:embed files/*"));
         assert!(c.should_preserve("//nolint:errcheck"));
         assert!(c.should_preserve("/// <reference types=\"node\" />"));
+    }
+
+    #[test]
+    fn css_lint_directives_are_preserved_by_default() {
+        let c = PreserveConfig::default();
+        assert!(c.should_preserve("/* stylelint-disable */"));
+        assert!(c.should_preserve("/* stylelint-disable-next-line color-no-hex */"));
+        assert!(c.should_preserve("/* postcss-custom-properties: off */"));
+        assert!(!c.should_preserve("/* ordinary css remark */"));
     }
 
     #[test]
