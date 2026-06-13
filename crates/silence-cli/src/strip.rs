@@ -68,7 +68,7 @@ pub enum StripOutcome {
     Unchanged,
     Checked { removed: usize },
     Wrote { removed: usize },
-    Hook,
+    Hook { removed: usize },
     Failed { msg: String },
 }
 
@@ -171,12 +171,9 @@ pub fn strip_file(path: &Path, opts: &StripOpts) -> StripOutcome {
                     msg: "write failed".into(),
                 };
             }
-            eprintln!(
-                "silence: stripped {} comment(s) from {}",
-                outcome.removed,
-                path.display()
-            );
-            StripOutcome::Hook
+            StripOutcome::Hook {
+                removed: outcome.removed,
+            }
         }
         WriteMode::Write { backup, verbose } => {
             if outcome.output == source {
@@ -252,7 +249,7 @@ pub fn run_batch(
             }
             StripOutcome::NoLang
             | StripOutcome::Unchanged
-            | StripOutcome::Hook
+            | StripOutcome::Hook { .. }
             | StripOutcome::Checked { .. } => {}
         }
     }
