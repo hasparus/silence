@@ -134,11 +134,9 @@ fn claude_context_payload(event_name: &str, stripped: &[(PathBuf, usize)]) -> se
         .collect::<Vec<_>>()
         .join(", ");
     let context = format!(
-        "silence removed {total} comment(s) it judged redundant from {files}. \
-         This project strips comments that restate or narrate the code. Do not \
-         re-add them: prefer self-explanatory code, and keep only public-API docs, \
-         the reasoning behind non-obvious choices, and directive comments \
-         (e.g. eslint-disable, @ts-expect-error, noqa)."
+        "silence stripped {total} comment(s) from {files}. \
+         Don't re-add comments that restate code; keep only docs, \
+         directives, and non-obvious why."
     );
     json!({
         "hookSpecificOutput": {
@@ -213,6 +211,6 @@ mod tests {
         let ctx = out["additionalContext"].as_str().unwrap();
         assert!(ctx.contains("3 comment(s)"), "total count: {ctx}");
         assert!(ctx.contains("src/a.ts, src/b.ts"), "file list: {ctx}");
-        assert!(ctx.contains("Do not"), "guidance: {ctx}");
+        assert!(ctx.contains("re-add"), "guidance: {ctx}");
     }
 }
