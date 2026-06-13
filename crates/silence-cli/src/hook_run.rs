@@ -186,12 +186,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn claude_payload_carries_event_name_and_context() {
+    fn claude_payload_carries_event_name_and_context() -> Result<(), Box<dyn std::error::Error>> {
         let payload = claude_context_payload("PostToolUse", 3);
         let out = &payload["hookSpecificOutput"];
         assert_eq!(out["hookEventName"], "PostToolUse");
-        let ctx = out["additionalContext"].as_str().unwrap();
+        let ctx = out["additionalContext"]
+            .as_str()
+            .ok_or("additionalContext is not a string")?;
         assert!(ctx.contains("3 comments"), "total count: {ctx}");
         assert!(ctx.contains("re-add"), "guidance: {ctx}");
+        Ok(())
     }
 }
