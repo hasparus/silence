@@ -24,6 +24,7 @@ embed-optional = [
     "dep:tree-sitter-kotlin-ng",
     "dep:tree-sitter-swift",
     "dep:tree-sitter-c-sharp",
+    "dep:tree-sitter-css",
 ]
 
 [build-dependencies]
@@ -42,6 +43,7 @@ tree-sitter-java = { workspace = true, optional = true }
 tree-sitter-kotlin-ng = { workspace = true, optional = true }
 tree-sitter-swift = { workspace = true, optional = true }
 tree-sitter-c-sharp = { workspace = true, optional = true }
+tree-sitter-css = { workspace = true, optional = true }
 libloading = "0.8"
 thiserror = { workspace = true }
 ureq = { version = "3", default-features = true, features = ["rustls"] }

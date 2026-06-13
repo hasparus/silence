@@ -18,6 +18,7 @@ pub enum Lang {
     Kotlin,
     Swift,
     CSharp,
+    Css,
 }
 
 pub fn all() -> impl Iterator<Item = Lang> + Clone {
@@ -76,7 +77,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    const ALL_VARIANTS: [Lang; 12] = [
+    const ALL_VARIANTS: [Lang; 13] = [
         Lang::TypeScript,
         Lang::Tsx,
         Lang::JavaScript,
@@ -89,6 +90,7 @@ mod tests {
         Lang::Kotlin,
         Lang::Swift,
         Lang::CSharp,
+        Lang::Css,
     ];
 
     #[test]
@@ -113,6 +115,7 @@ mod tests {
         assert_eq!(Lang::from_extension("kts"), Some(Lang::Kotlin));
         assert_eq!(Lang::from_extension("swift"), Some(Lang::Swift));
         assert_eq!(Lang::from_extension("cs"), Some(Lang::CSharp));
+        assert_eq!(Lang::from_extension("css"), Some(Lang::Css));
         assert_eq!(Lang::from_extension("unknown"), None);
     }
 
