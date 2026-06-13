@@ -128,16 +128,8 @@ fn emit_claude_context(event_name: &str, stripped: &[(PathBuf, usize)]) {
 
 fn claude_context_payload(event_name: &str, stripped: &[(PathBuf, usize)]) -> serde_json::Value {
     let total: usize = stripped.iter().map(|(_, removed)| removed).sum();
-    let files = stripped
-        .iter()
-        .map(|(path, _)| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let context = format!(
-        "silence stripped {total} comment(s) from {files}. \
-         Don't re-add comments that restate code; keep only docs, \
-         directives, and non-obvious why."
-    );
+    let context =
+        format!("silence stripped {total} comments. Don't re-add. Prefer self-explanatory code.");
     json!({
         "hookSpecificOutput": {
             "hookEventName": event_name,
@@ -209,8 +201,7 @@ mod tests {
         let out = &payload["hookSpecificOutput"];
         assert_eq!(out["hookEventName"], "PostToolUse");
         let ctx = out["additionalContext"].as_str().unwrap();
-        assert!(ctx.contains("3 comment(s)"), "total count: {ctx}");
-        assert!(ctx.contains("src/a.ts, src/b.ts"), "file list: {ctx}");
+        assert!(ctx.contains("3 comments"), "total count: {ctx}");
         assert!(ctx.contains("re-add"), "guidance: {ctx}");
     }
 }
