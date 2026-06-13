@@ -61,15 +61,15 @@ fn hook_targets(mut targets: Vec<PathBuf>, state: Option<&GitState>) -> Vec<Path
 
 pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
     let state = git_state();
-    let event = if explicit.is_empty() {
+    let HookEvent {
+        paths,
+        claude_event,
+    } = if explicit.is_empty() {
         read_stdin_event()
     } else {
-        HookEvent {
-            paths: explicit.to_vec(),
-            claude_event: None,
-        }
+        HookEvent::from_paths(explicit.to_vec())
     };
-    let targets = hook_targets(event.paths.clone(), state.as_ref());
+    let targets = hook_targets(paths, state.as_ref());
     if targets.is_empty() {
         return;
     }
@@ -101,33 +101,30 @@ pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
         }
     }
 
-    report_stripped(&stripped, &event);
+    report_stripped(&stripped, claude_event.as_deref());
 }
 
 /// Per-file note on stderr (visible in the agent's debug/transcript view), plus
 /// — for Claude Code — a stdout JSON payload that feeds the model context so it
 /// stops re-adding the comments silence just removed.
-fn report_stripped(stripped: &[(PathBuf, usize)], event: &HookEvent) {
+fn report_stripped(stripped: &[(PathBuf, usize)], claude_event: Option<&str>) {
     if stripped.is_empty() {
         return;
     }
+    let mut total = 0;
     for (path, removed) in stripped {
+        total += removed;
         eprintln!(
             "silence: stripped {removed} comment(s) from {}",
             path.display()
         );
     }
-    if let Some(name) = event.claude_event.as_deref() {
-        emit_claude_context(name, stripped);
+    if let Some(event_name) = claude_event {
+        println!("{}", claude_context_payload(event_name, total));
     }
 }
 
-fn emit_claude_context(event_name: &str, stripped: &[(PathBuf, usize)]) {
-    println!("{}", claude_context_payload(event_name, stripped));
-}
-
-fn claude_context_payload(event_name: &str, stripped: &[(PathBuf, usize)]) -> serde_json::Value {
-    let total: usize = stripped.iter().map(|(_, removed)| removed).sum();
+fn claude_context_payload(event_name: &str, total: usize) -> serde_json::Value {
     let context =
         format!("silence stripped {total} comments. Don't re-add. Prefer self-explanatory code.");
     json!({
@@ -167,24 +164,21 @@ fn hook_line_ranges(path: &Path, state: Option<&GitState>) -> Option<LineRanges>
 }
 
 fn read_stdin_event() -> HookEvent {
-    let mut input = String::new();
-    if let Err(e) = std::io::stdin().read_to_string(&mut input) {
-        eprintln!("silence: skip hook stdin: {e}");
-        return HookEvent {
-            paths: Vec::new(),
-            claude_event: None,
-        };
-    }
-    match hook_input::event_from_stdin(&input) {
+    match read_stdin().and_then(|input| hook_input::event_from_stdin(&input)) {
         Ok(event) => event,
         Err(e) => {
             eprintln!("silence: skip hook stdin: {e}");
-            HookEvent {
-                paths: Vec::new(),
-                claude_event: None,
-            }
+            HookEvent::from_paths(Vec::new())
         }
     }
+}
+
+fn read_stdin() -> Result<String, String> {
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|e| e.to_string())?;
+    Ok(input)
 }
 
 #[cfg(test)]
@@ -193,11 +187,7 @@ mod tests {
 
     #[test]
     fn claude_payload_carries_event_name_and_context() {
-        let stripped = vec![
-            (PathBuf::from("src/a.ts"), 2),
-            (PathBuf::from("src/b.ts"), 1),
-        ];
-        let payload = claude_context_payload("PostToolUse", &stripped);
+        let payload = claude_context_payload("PostToolUse", 3);
         let out = &payload["hookSpecificOutput"];
         assert_eq!(out["hookEventName"], "PostToolUse");
         let ctx = out["additionalContext"].as_str().unwrap();

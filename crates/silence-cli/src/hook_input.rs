@@ -16,6 +16,17 @@ pub struct HookEvent {
     pub claude_event: Option<String>,
 }
 
+impl HookEvent {
+    /// An event sourced from explicit paths (Codex/Opencode/Pi, CLI), with no
+    /// Claude `additionalContext` channel.
+    pub fn from_paths(paths: Vec<PathBuf>) -> Self {
+        Self {
+            paths,
+            claude_event: None,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct HookArgs {
