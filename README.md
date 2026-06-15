@@ -70,8 +70,9 @@ know that I asked.
 
 - `[path]…` — optional paths; reads the agent's stdin event when omitted
 - strips comments inside the uncommitted change; always exits 0
-- on Claude Code, feeds the model a short `additionalContext` note (via stdout
-  JSON) so it learns the comments were stripped and stops re-adding them
+- feeds the model a short note so it learns the comments were stripped and
+  stops re-adding them: Claude Code and Codex read the `additionalContext`
+  stdout JSON natively; the Opencode and Pi plugins splice it into the tool result
 - `--no-default-preserve` — same as on `strip`
 
 **`silence hooks`** — install into agent configs

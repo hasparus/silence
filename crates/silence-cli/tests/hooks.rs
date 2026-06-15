@@ -476,6 +476,10 @@ fn generated_plugin_and_extension_have_verified_field_names() -> TestResult {
         "opencode plugin should execute without shell expansion"
     );
     assert!(opencode_plugin.contains("[\"hook\""));
+    assert!(
+        opencode_plugin.contains("additionalContext") && opencode_plugin.contains("output.output"),
+        "opencode plugin must splice silence's note into the tool result the model reads"
+    );
 
     let pi_extension = std::fs::read_to_string(home.join(".pi/agent/extensions/silence.ts"))?;
     assert!(
@@ -491,6 +495,10 @@ fn generated_plugin_and_extension_have_verified_field_names() -> TestResult {
         "pi's edit/write tools use `path` (not file_path)"
     );
     assert!(pi_extension.contains("[\"hook\""));
+    assert!(
+        pi_extension.contains("additionalContext") && pi_extension.contains("content"),
+        "pi extension must return silence's note as tool-result content for the model"
+    );
     Ok(())
 }
 
