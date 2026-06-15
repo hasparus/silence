@@ -120,6 +120,25 @@ jobs:
             silence-grammar-*-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}
             silence-grammar-*-${{ matrix.grammar_platform }}.${{ matrix.grammar_ext }}.minisig
 
+  release-notes:
+    name: release notes
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Generate and set release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Generate once and replace the body. softprops runs per matrix leg
+          # against one release; letting it generate would append N copies.
+          notes="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${GITHUB_REF_NAME}" -q .body)"
+          gh release edit "${GITHUB_REF_NAME}" --notes "$notes"
+
   publish-crates:
     name: crates.io
     runs-on: ubuntu-latest
