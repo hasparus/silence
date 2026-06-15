@@ -6,25 +6,6 @@ use std::path::PathBuf;
 struct HookStdin {
     args: Option<HookArgs>,
     tool_input: Option<HookArgs>,
-    hook_event_name: Option<String>,
-}
-
-/// Parsed agent hook event: the files it touched plus, for Claude Code, the
-/// event name (e.g. `PostToolUse`) we echo back when feeding context to the model.
-pub struct HookEvent {
-    pub paths: Vec<PathBuf>,
-    pub claude_event: Option<String>,
-}
-
-impl HookEvent {
-    /// An event sourced from explicit paths (Codex/Opencode/Pi, CLI), with no
-    /// Claude `additionalContext` channel.
-    pub fn from_paths(paths: Vec<PathBuf>) -> Self {
-        Self {
-            paths,
-            claude_event: None,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -38,22 +19,12 @@ struct HookArgs {
     input: Option<String>,
 }
 
-pub fn event_from_stdin(input: &str) -> Result<HookEvent, String> {
+pub fn paths_from_stdin(input: &str) -> Result<Vec<PathBuf>, String> {
     if input.trim().is_empty() {
-        return Ok(HookEvent {
-            paths: Vec::new(),
-            claude_event: None,
-        });
+        return Ok(Vec::new());
     }
     let event: HookStdin = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    let claude_event = event
-        .hook_event_name
-        .clone()
-        .filter(|name| !name.is_empty());
-    Ok(HookEvent {
-        paths: event.into_paths(),
-        claude_event,
-    })
+    Ok(event.into_paths())
 }
 
 impl HookStdin {
@@ -108,43 +79,38 @@ mod tests {
 
     #[test]
     fn claude_tool_input_file_path() -> TestResult {
-        let event = event_from_stdin(
+        let paths = paths_from_stdin(
             r#"{"hook_event_name":"PostToolUse","tool_input":{"file_path":"/tmp/a.rs"}}"#,
         )?;
-        assert_eq!(event.paths, vec![PathBuf::from("/tmp/a.rs")]);
-        assert_eq!(event.claude_event.as_deref(), Some("PostToolUse"));
+        assert_eq!(paths, vec![PathBuf::from("/tmp/a.rs")]);
         Ok(())
     }
 
     #[test]
     fn opencode_args_patch_text() -> TestResult {
-        let event =
-            event_from_stdin(r#"{"args":{"patchText":"*** Update File: src/a.rs\n+// x\n"}}"#)?;
-        assert_eq!(event.paths, vec![PathBuf::from("src/a.rs")]);
-        assert_eq!(event.claude_event, None);
+        let paths =
+            paths_from_stdin(r#"{"args":{"patchText":"*** Update File: src/a.rs\n+// x\n"}}"#)?;
+        assert_eq!(paths, vec![PathBuf::from("src/a.rs")]);
         Ok(())
     }
 
     #[test]
     fn codex_tool_input_patch_in_input_field() -> TestResult {
-        let event = event_from_stdin(
+        let paths = paths_from_stdin(
             r#"{"tool_input":{"input":"*** Update File: b.rs\n*** End Patch\n"}}"#,
         )?;
-        assert_eq!(event.paths, vec![PathBuf::from("b.rs")]);
-        assert_eq!(event.claude_event, None);
+        assert_eq!(paths, vec![PathBuf::from("b.rs")]);
         Ok(())
     }
 
     #[test]
     fn empty_stdin_is_ok() -> TestResult {
-        let event = event_from_stdin("  ")?;
-        assert!(event.paths.is_empty());
-        assert_eq!(event.claude_event, None);
+        assert!(paths_from_stdin("  ")?.is_empty());
         Ok(())
     }
 
     #[test]
     fn invalid_json_fails() {
-        assert!(event_from_stdin("{").is_err());
+        assert!(paths_from_stdin("{").is_err());
     }
 }
