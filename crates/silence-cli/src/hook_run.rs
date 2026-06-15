@@ -122,8 +122,9 @@ fn report_stripped(stripped: &[(PathBuf, usize)]) {
 }
 
 fn context_payload(total: usize) -> serde_json::Value {
+    let noun = if total == 1 { "comment" } else { "comments" };
     let context =
-        format!("silence stripped {total} comments. Don't re-add. Prefer self-explanatory code.");
+        format!("silence stripped {total} {noun}. Don't re-add. Prefer self-explanatory code.");
     json!({
         "hookSpecificOutput": {
             "hookEventName": "PostToolUse",
@@ -192,6 +193,16 @@ mod tests {
             .ok_or("additionalContext is not a string")?;
         assert!(ctx.contains("3 comments"), "total count: {ctx}");
         assert!(ctx.contains("re-add"), "guidance: {ctx}");
+        Ok(())
+    }
+
+    #[test]
+    fn payload_uses_singular_for_one_comment() -> Result<(), Box<dyn std::error::Error>> {
+        let payload = context_payload(1);
+        let ctx = payload["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .ok_or("additionalContext is not a string")?;
+        assert!(ctx.contains("1 comment."), "singular noun: {ctx}");
         Ok(())
     }
 }

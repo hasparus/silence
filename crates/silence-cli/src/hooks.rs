@@ -453,10 +453,18 @@ fn js_string(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| format!("{s:?}"))
 }
 
+/// Opencode plugin. Its `tool.execute.after` handler returns `void`, so the
+/// only way to feed the model is to mutate the passed `output` in place;
+/// mutations to `output.output` reach the model for built-in write/edit/patch
+/// tools (not MCP tools). See sst/opencode#3384. The asset ships comment-free
+/// because silence's own hook strips its comments — hence this note lives here.
 fn opencode_plugin(bin: &str) -> String {
     include_str!("../assets/opencode-plugin.ts").replace("__BIN__", &js_string(bin))
 }
 
+/// Pi extension. Its `tool_result` handler returns a partial patch that pi
+/// merges into the LLM-visible result, so we return `{ content: [...] }` with
+/// the note appended. Asset is comment-free for the same reason as above.
 fn pi_extension(bin: &str) -> String {
     include_str!("../assets/pi-extension.ts").replace("__BIN__", &js_string(bin))
 }
