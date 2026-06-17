@@ -39,13 +39,6 @@ silence strip file.py --preserve-lines
 silence llm # print a short guide for llms
 ```
 
-## rant
-
-Yes, machine, you have obeyed. Yes, the code is blazing fast, just like I
-asked. Yes it's "no-slop and production-grade". Neither the code reviewer,
-nor future me, nor future you spending tokens reading this code needs to
-know that I asked.
-
 ## usage
 
 ### commands
@@ -109,6 +102,17 @@ preserve = ["TODO", "FIXME", "*IMPORTANT*"]   # extra patterns; globs allowed
 `--no-default-preserve` drops the built-ins and directive detection but keeps
 your `preserve` list. `.silenceignore` (same format as `.gitignore`, optionally
 at `~/.config/.silenceignore`) excludes files from walks.
+
+## example usage
+
+<img width="720" height="720" alt="silence-gtm" src="https://github.com/user-attachments/assets/5fd06537-d87c-4626-94b7-6dfd49f63735" />
+
+## rant
+
+Yes, machine, you have obeyed. Yes, the code is blazing fast, just like I
+asked. Yes it's "no-slop and production-grade". Neither the code reviewer,
+nor future me, nor future you spending tokens reading this code needs to
+know that I asked.
 
 ## contributing
 
