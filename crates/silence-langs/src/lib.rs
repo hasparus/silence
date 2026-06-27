@@ -19,6 +19,8 @@ pub enum Lang {
     Swift,
     CSharp,
     Css,
+    Json,
+    Yaml,
 }
 
 pub fn all() -> impl Iterator<Item = Lang> + Clone {
@@ -77,7 +79,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    const ALL_VARIANTS: [Lang; 13] = [
+    const ALL_VARIANTS: [Lang; 15] = [
         Lang::TypeScript,
         Lang::Tsx,
         Lang::JavaScript,
@@ -91,6 +93,8 @@ mod tests {
         Lang::Swift,
         Lang::CSharp,
         Lang::Css,
+        Lang::Json,
+        Lang::Yaml,
     ];
 
     #[test]
@@ -116,6 +120,9 @@ mod tests {
         assert_eq!(Lang::from_extension("swift"), Some(Lang::Swift));
         assert_eq!(Lang::from_extension("cs"), Some(Lang::CSharp));
         assert_eq!(Lang::from_extension("css"), Some(Lang::Css));
+        assert_eq!(Lang::from_extension("json"), Some(Lang::Json));
+        assert_eq!(Lang::from_extension("yml"), Some(Lang::Yaml));
+        assert_eq!(Lang::from_extension("yaml"), Some(Lang::Yaml));
         assert_eq!(Lang::from_extension("unknown"), None);
     }
 
@@ -123,6 +130,8 @@ mod tests {
     fn builtin_vs_optional() {
         assert!(Lang::Python.is_builtin());
         assert!(Lang::TypeScript.is_builtin());
+        assert!(Lang::Json.is_builtin());
+        assert!(!Lang::Yaml.is_builtin());
         assert!(!Lang::Rust.is_builtin());
         assert!(!Lang::Cpp.is_builtin());
         assert!(!Lang::Java.is_builtin());

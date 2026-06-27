@@ -145,6 +145,24 @@ pub const LANGS: &[LangSpec] = &[
             symbol: "tree_sitter_css",
         }),
     },
+    LangSpec {
+        lang: Lang::Json,
+        name: "JSON",
+        extensions: &["json", "jsonc"],
+        comment: CommentProfile::Unified,
+        pack: None,
+    },
+    LangSpec {
+        lang: Lang::Yaml,
+        name: "YAML",
+        extensions: &["yml", "yaml"],
+        comment: CommentProfile::Unified,
+        pack: Some(PackFields {
+            id: "yaml",
+            crate_name: "tree-sitter-yaml",
+            symbol: "tree_sitter_yaml",
+        }),
+    },
 ];
 
 pub const OPTIONAL_PACK_COUNT: usize = count_optional(LANGS);
@@ -162,25 +180,10 @@ const fn count_optional(specs: &[LangSpec]) -> usize {
 }
 
 pub fn get(lang: Lang) -> &'static LangSpec {
-    match lang {
-        Lang::TypeScript => by_index(0),
-        Lang::Tsx => by_index(1),
-        Lang::JavaScript => by_index(2),
-        Lang::Python => by_index(3),
-        Lang::Rust => by_index(4),
-        Lang::Go => by_index(5),
-        Lang::Toml => by_index(6),
-        Lang::Cpp => by_index(7),
-        Lang::Java => by_index(8),
-        Lang::Kotlin => by_index(9),
-        Lang::Swift => by_index(10),
-        Lang::CSharp => by_index(11),
-        Lang::Css => by_index(12),
+    match LANGS.iter().find(|spec| spec.lang == lang) {
+        Some(spec) => spec,
+        None => unreachable!("every Lang variant has a LangSpec"),
     }
-}
-
-fn by_index(index: usize) -> &'static LangSpec {
-    &LANGS[index]
 }
 
 pub fn from_extension(ext: &str) -> Option<Lang> {
@@ -223,7 +226,7 @@ mod tests {
         for spec in LANGS {
             let is_builtin_lang = matches!(
                 spec.lang,
-                Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python
+                Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python | Lang::Json
             );
             assert_eq!(spec.pack.is_none(), is_builtin_lang, "{:?}", spec.lang);
         }
