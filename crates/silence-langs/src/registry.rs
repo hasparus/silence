@@ -145,6 +145,24 @@ pub const LANGS: &[LangSpec] = &[
             symbol: "tree_sitter_css",
         }),
     },
+    LangSpec {
+        lang: Lang::Json,
+        name: "JSON",
+        extensions: &["json", "jsonc"],
+        comment: CommentProfile::Unified,
+        pack: None,
+    },
+    LangSpec {
+        lang: Lang::Yaml,
+        name: "YAML",
+        extensions: &["yml", "yaml"],
+        comment: CommentProfile::Unified,
+        pack: Some(PackFields {
+            id: "yaml",
+            crate_name: "tree-sitter-yaml",
+            symbol: "tree_sitter_yaml",
+        }),
+    },
 ];
 
 pub const OPTIONAL_PACK_COUNT: usize = count_optional(LANGS);
@@ -176,6 +194,8 @@ pub fn get(lang: Lang) -> &'static LangSpec {
         Lang::Swift => by_index(10),
         Lang::CSharp => by_index(11),
         Lang::Css => by_index(12),
+        Lang::Json => by_index(13),
+        Lang::Yaml => by_index(14),
     }
 }
 
@@ -223,7 +243,7 @@ mod tests {
         for spec in LANGS {
             let is_builtin_lang = matches!(
                 spec.lang,
-                Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python
+                Lang::TypeScript | Lang::Tsx | Lang::JavaScript | Lang::Python | Lang::Json
             );
             assert_eq!(spec.pack.is_none(), is_builtin_lang, "{:?}", spec.lang);
         }

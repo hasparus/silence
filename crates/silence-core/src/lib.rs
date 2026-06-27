@@ -487,6 +487,12 @@ mod tests {
                 ".a {\n  /* x */\n  color: red;\n}\n",
                 ".a {\n  color: red;\n}\n",
             ),
+            (
+                Lang::Json,
+                "{\n  // x\n  \"a\": 1\n}\n",
+                "{\n  \"a\": 1\n}\n",
+            ),
+            (Lang::Yaml, "a: 1\n# x\nb: 2\n", "a: 1\nb: 2\n"),
         ];
         for &(lang, src, expected) in CASES {
             assert_eq!(strip_default(src, lang)?, expected);

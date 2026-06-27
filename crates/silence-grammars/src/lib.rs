@@ -79,6 +79,7 @@ fn builtin(lang: Lang) -> Option<Language> {
         Lang::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         Lang::Tsx | Lang::JavaScript => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         Lang::Python => Some(tree_sitter_python::LANGUAGE.into()),
+        Lang::Json => Some(tree_sitter_json::LANGUAGE.into()),
         _ => unreachable!("all builtins are handled above"),
     }
 }
