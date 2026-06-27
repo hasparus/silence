@@ -180,10 +180,10 @@ const fn count_optional(specs: &[LangSpec]) -> usize {
 }
 
 pub fn get(lang: Lang) -> &'static LangSpec {
-    LANGS
-        .iter()
-        .find(|spec| spec.lang == lang)
-        .expect("every Lang variant has a LangSpec")
+    match LANGS.iter().find(|spec| spec.lang == lang) {
+        Some(spec) => spec,
+        None => unreachable!("every Lang variant has a LangSpec"),
+    }
 }
 
 pub fn from_extension(ext: &str) -> Option<Lang> {
