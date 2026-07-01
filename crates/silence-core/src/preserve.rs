@@ -124,11 +124,14 @@ fn looks_like_doc_comment(text: &str) -> bool {
 
 fn comment_body(text: &str) -> &str {
     let t = text.trim();
-    let body = ["/**", "/*!", "/*", "///", "//!", "//", "#!", "#"]
+    let body = ["/**", "/*!", "/*", "///", "//!", "//", "<!--", "#!", "#"]
         .iter()
         .find_map(|&p| t.strip_prefix(p))
         .unwrap_or(t);
-    body.strip_suffix("*/").unwrap_or(body).trim()
+    body.strip_suffix("*/")
+        .or_else(|| body.strip_suffix("-->"))
+        .unwrap_or(body)
+        .trim()
 }
 
 fn looks_like_directive(text: &str) -> bool {
@@ -223,6 +226,7 @@ mod tests {
         assert!(!c.should_preserve("// just a normal comment"));
         assert!(!c.should_preserve("// http://example.com is a url"));
         assert!(!c.should_preserve("/* a multi word remark */"));
+        assert!(!c.should_preserve("<!-- an ordinary html comment -->"));
     }
 
     #[test]

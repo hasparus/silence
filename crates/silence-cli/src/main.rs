@@ -99,7 +99,8 @@ struct StripArgs {
     #[arg(conflicts_with_all = ["staged", "unstaged", "changes"])]
     paths: Vec<PathBuf>,
 
-    #[arg(short, long)]
+    #[arg(short, long, hide = true)]
+    #[allow(dead_code)]
     recursive: bool,
 
     #[command(flatten)]
@@ -241,7 +242,7 @@ fn run_strip(args: &StripArgs, loaded: &LoadedConfig, preserve: PreserveConfig) 
         None
     };
 
-    let jobs = build_jobs(&args.paths, args.recursive, git_scope)?;
+    let jobs = build_jobs(&args.paths, git_scope)?;
     if jobs.is_empty() {
         eprintln!("no supported files to process");
         return Ok(());
@@ -295,8 +296,7 @@ const LLM_GUIDE: &str = "\
 silence — remove slop comments from source code (tree-sitter based).
 
 USAGE
-  silence strip <path>        strip comments from a file or directory
-  silence strip <path> -r     recurse into subdirectories
+  silence strip <path>        strip comments from a file or directory (recursive)
   silence strip <path> --check report only; exit 1 if comments would be removed
   silence strip --staged      strip comments inside staged git hunks
   silence strip --changes     strip comments inside all uncommitted changes
@@ -308,8 +308,8 @@ KEEP RULES
   //go:embed, /// <reference/>). Add more in .silence.toml.
 
 LANGUAGES
-  Built-in: TypeScript/JavaScript and Python.
-  On first use: Rust, Go, TOML, C/C++, Java, Kotlin, Swift, C#, CSS.
+  Built-in: TypeScript/JavaScript, Python, and JSON.
+  On first use: Rust, Go, TOML, C/C++, Java, Kotlin, Swift, C#, CSS, YAML, Astro.
   Respects .gitignore and .silenceignore.
 
 AGENT GUIDANCE

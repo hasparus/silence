@@ -146,8 +146,41 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
         }
     }
 
+    collect_injected(source, tree.root_node(), lang.injections(), &mut out)?;
+
     out.sort_by_key(|c| c.start_byte);
     Ok(out)
+}
+
+/// Re-parse injected sub-language regions (e.g. Astro frontmatter as TypeScript)
+/// and merge their comments back, translating byte/row offsets into the outer file.
+fn collect_injected<'a>(
+    source: &str,
+    root: tree_sitter::Node<'a>,
+    injections: &[(&str, Lang)],
+    out: &mut Vec<Comment>,
+) -> Result<(), Error> {
+    if injections.is_empty() {
+        return Ok(());
+    }
+    let mut stack: Vec<tree_sitter::Node<'a>> = vec![root];
+    while let Some(node) = stack.pop() {
+        if let Some(&(_, sublang)) = injections.iter().find(|(kind, _)| *kind == node.kind()) {
+            let byte_off = node.start_byte();
+            let row_off = node.start_position().row;
+            for mut c in find_comments(&source[byte_off..node.end_byte()], sublang)? {
+                c.start_byte += byte_off;
+                c.end_byte += byte_off;
+                c.start_row += row_off;
+                c.end_row += row_off;
+                out.push(c);
+            }
+            continue;
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.children(&mut cursor));
+    }
+    Ok(())
 }
 
 fn comment_kind_from_text(text: &str) -> CommentKind {
@@ -554,6 +587,37 @@ mod tests {
         assert_eq!(
             strip_default(src, Lang::Rust)?,
             "let x = 5;\r\nlet y = 6;\r\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn astro_strips_frontmatter_and_template_comments() -> TestResult {
+        let src = "---\nconst x = 1; // strip\n// gone\n---\n<div>hi</div>\n<!-- strip -->\n";
+        assert_eq!(
+            strip_default(src, Lang::Astro)?,
+            "---\nconst x = 1;\n---\n<div>hi</div>\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn astro_template_only_strips_html_comments() -> TestResult {
+        let src = "<div>hi</div>\n<!-- gone -->\n";
+        assert_eq!(strip_default(src, Lang::Astro)?, "<div>hi</div>\n");
+        Ok(())
+    }
+
+    #[test]
+    fn astro_line_ranges_use_file_rows() -> TestResult {
+        let src = "---\nlet a = 1; // keep\nlet b = 2; // go\n---\n";
+        let opts = Options {
+            line_ranges: vec![(3, 3)],
+            ..Default::default()
+        };
+        assert_eq!(
+            strip(src, Lang::Astro, &opts)?.output,
+            "---\nlet a = 1; // keep\nlet b = 2;\n---\n"
         );
         Ok(())
     }

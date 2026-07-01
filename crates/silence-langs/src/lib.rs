@@ -21,6 +21,7 @@ pub enum Lang {
     Css,
     Json,
     Yaml,
+    Astro,
 }
 
 pub fn all() -> impl Iterator<Item = Lang> + Clone {
@@ -72,6 +73,17 @@ impl Lang {
     pub fn comment_capture_names(self) -> &'static [&'static str] {
         self.spec().comment.capture_names()
     }
+
+    /// Sub-language regions to parse with their own grammar: `(node_kind, lang)`.
+    /// Astro's frontmatter is an opaque `frontmatter_js_block`, so its `//` and
+    /// `/* */` comments are only reachable by re-parsing that node as TypeScript.
+    #[must_use]
+    pub fn injections(self) -> &'static [(&'static str, Lang)] {
+        match self {
+            Lang::Astro => &[("frontmatter_js_block", Lang::TypeScript)],
+            _ => &[],
+        }
+    }
 }
 
 #[cfg(test)]
@@ -79,7 +91,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    const ALL_VARIANTS: [Lang; 15] = [
+    const ALL_VARIANTS: [Lang; 16] = [
         Lang::TypeScript,
         Lang::Tsx,
         Lang::JavaScript,
@@ -95,6 +107,7 @@ mod tests {
         Lang::Css,
         Lang::Json,
         Lang::Yaml,
+        Lang::Astro,
     ];
 
     #[test]
@@ -123,6 +136,7 @@ mod tests {
         assert_eq!(Lang::from_extension("json"), Some(Lang::Json));
         assert_eq!(Lang::from_extension("yml"), Some(Lang::Yaml));
         assert_eq!(Lang::from_extension("yaml"), Some(Lang::Yaml));
+        assert_eq!(Lang::from_extension("astro"), Some(Lang::Astro));
         assert_eq!(Lang::from_extension("unknown"), None);
     }
 

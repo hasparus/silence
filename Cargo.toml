@@ -13,7 +13,7 @@ version = "0.6.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/hasparus/silence"
-rust-version = "1.82"
+rust-version = "1.85"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -40,6 +40,7 @@ tree-sitter-c-sharp = "0.23"
 tree-sitter-css = "0.25"
 tree-sitter-json = "0.24"
 tree-sitter-yaml = "0.7"
+tree-sitter-astro-next = "0.1"
 
 clap = { version = "4.6", features = ["derive"] }
 ignore = "0.4"

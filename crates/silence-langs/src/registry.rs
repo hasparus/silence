@@ -163,6 +163,17 @@ pub const LANGS: &[LangSpec] = &[
             symbol: "tree_sitter_yaml",
         }),
     },
+    LangSpec {
+        lang: Lang::Astro,
+        name: "Astro",
+        extensions: &["astro"],
+        comment: CommentProfile::Unified,
+        pack: Some(PackFields {
+            id: "astro",
+            crate_name: "tree-sitter-astro-next",
+            symbol: "tree_sitter_astro",
+        }),
+    },
 ];
 
 pub const OPTIONAL_PACK_COUNT: usize = count_optional(LANGS);
