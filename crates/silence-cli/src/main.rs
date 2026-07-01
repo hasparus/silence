@@ -100,6 +100,7 @@ struct StripArgs {
     paths: Vec<PathBuf>,
 
     #[arg(short, long, hide = true)]
+    #[allow(dead_code)]
     recursive: bool,
 
     #[command(flatten)]
@@ -241,8 +242,7 @@ fn run_strip(args: &StripArgs, loaded: &LoadedConfig, preserve: PreserveConfig) 
         None
     };
 
-    let _ = args.recursive;
-    let jobs = build_jobs(&args.paths, true, git_scope)?;
+    let jobs = build_jobs(&args.paths, git_scope)?;
     if jobs.is_empty() {
         eprintln!("no supported files to process");
         return Ok(());
@@ -308,8 +308,8 @@ KEEP RULES
   //go:embed, /// <reference/>). Add more in .silence.toml.
 
 LANGUAGES
-  Built-in: TypeScript/JavaScript, Python, JSON, and Astro (frontmatter only).
-  On first use: Rust, Go, TOML, C/C++, Java, Kotlin, Swift, C#, CSS, YAML.
+  Built-in: TypeScript/JavaScript, Python, and JSON.
+  On first use: Rust, Go, TOML, C/C++, Java, Kotlin, Swift, C#, CSS, YAML, Astro.
   Respects .gitignore and .silenceignore.
 
 AGENT GUIDANCE

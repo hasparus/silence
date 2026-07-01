@@ -72,7 +72,7 @@ pub enum StripOutcome {
     Failed { msg: String },
 }
 
-pub fn collect_paths(root: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
+pub fn collect_paths(root: &Path) -> Result<Vec<PathBuf>> {
     if root.is_file() {
         return Ok(vec![root.to_path_buf()]);
     }
@@ -83,9 +83,6 @@ pub fn collect_paths(root: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
     let global = home_dir().join(".config/.silenceignore");
     if global.is_file() {
         let _ = builder.add_ignore(global);
-    }
-    if !recursive {
-        builder.max_depth(Some(1));
     }
     let mut out = Vec::new();
     for entry in builder.build() {
@@ -98,11 +95,7 @@ pub fn collect_paths(root: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-pub fn build_jobs(
-    paths: &[PathBuf],
-    recursive: bool,
-    git_scope: Option<git::Scope>,
-) -> Result<Vec<StripJob>> {
+pub fn build_jobs(paths: &[PathBuf], git_scope: Option<git::Scope>) -> Result<Vec<StripJob>> {
     if let Some(scope) = git_scope {
         let ch = git::changes(scope)?;
         return Ok(ch
@@ -117,7 +110,7 @@ pub fn build_jobs(
     }
     let mut out = Vec::new();
     for p in paths {
-        for f in collect_paths(p, recursive)? {
+        for f in collect_paths(p)? {
             out.push((f, Vec::new()));
         }
     }

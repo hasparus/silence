@@ -45,7 +45,7 @@ silence llm # print a short guide for llms
 
 **`silence strip`** — remove or check for comments
 
-- `<path>…` — file or directory, recursed into (omit when using a git scope flag)
+- `<path>…` — file or directory (directories recurse; omit when using a git scope flag)
 - `--check` — print what would be removed; exit 1 if any
 - `--inline` — remove only line comments (`//`, `#`)
 - `--block` — remove only block comments (`/* … */`)
@@ -125,7 +125,7 @@ unit-tested in isolation and u can build on top of it.
 
 ### build
 
-Needs a Rust toolchain (1.82+). `git2` links libgit2 (vendored by default
+Needs a Rust toolchain (1.85+). `git2` links libgit2 (vendored by default
 via the crate; system `cmake`/C toolchain may be required on first build).
 
 ```
@@ -155,6 +155,6 @@ downloads on first use into `~/.config/silence/grammars/` from GitHub release as
 3. wire `silence-grammars` `ensure()`; `every_grammar_loads_and_query_compiles`
    in `silence-strip-grammars` verifies query/ABI
 
-Multi-language files (e.g. Astro's TypeScript frontmatter, whose grammar exposes it
-as one opaque node) declare sub-language regions via `Lang::injections()` — silence
-re-parses each region with the inner grammar and merges the comments back.
+Some files embed a second language. Astro's frontmatter is TypeScript, but the Astro
+grammar returns it as one opaque node. `Lang::injections()` lists these sub-language
+regions; silence re-parses each with the inner grammar and merges the comments back.
