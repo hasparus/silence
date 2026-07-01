@@ -26,6 +26,7 @@ embed-optional = [
     "dep:tree-sitter-c-sharp",
     "dep:tree-sitter-css",
     "dep:tree-sitter-yaml",
+    "dep:tree-sitter-astro-next",
 ]
 
 [build-dependencies]
@@ -47,6 +48,7 @@ tree-sitter-swift = { workspace = true, optional = true }
 tree-sitter-c-sharp = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
+tree-sitter-astro-next = { workspace = true, optional = true }
 libloading = "0.8"
 thiserror = { workspace = true }
 ureq = { version = "3", default-features = true, features = ["rustls"] }

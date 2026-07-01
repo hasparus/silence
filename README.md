@@ -5,7 +5,7 @@
 Strips comments in an agent post-write hook. Preserves doc comments and directives by default (e.g. JSDoc, `eslint-disable-next-line`, `@ts-check`, `noqa:`, `TODO`, `FIXME`, ` HACK`).
 
 Works with **Claude Code**, **Codex**, **Opencode**, and **Pi**. \
-Supports TypeScript/JavaScript, Python, Rust, Go, C/C++, Java, Kotlin, C#, Swift, CSS, JSON, YAML.
+Supports TypeScript/JavaScript, Python, Rust, Go, C/C++, Java, Kotlin, C#, Swift, CSS, JSON, YAML, Astro.
 
 Grammars are downloaded lazily to avoid a huge binary.
 
@@ -30,7 +30,7 @@ or grab a binary from [Releases](https://github.com/hasparus/silence/releases).
 ```sh
 silence hooks install # wire silence into your AI agent's post-edit hook
 
-silence strip src/ -r # strip comments in a tree (respects .gitignore and .silenceignore)
+silence strip src/ # strip comments in a tree (recursive; respects .gitignore and .silenceignore)
 silence strip file1.rs file2.rs --check # exit 1 if comments present, don't write files
 silence strip --staged # only strip comments inside staged hunks
 silence strip --changes # strip comments inside all uncommitted changes
@@ -45,8 +45,7 @@ silence llm # print a short guide for llms
 
 **`silence strip`** — remove or check for comments
 
-- `<path>…` — file or directory (omit when using a git scope flag)
-- `-r, --recursive` — recurse into subdirectories
+- `<path>…` — file or directory, recursed into (omit when using a git scope flag)
 - `--check` — print what would be removed; exit 1 if any
 - `--inline` — remove only line comments (`//`, `#`)
 - `--block` — remove only block comments (`/* … */`)
@@ -155,3 +154,7 @@ downloads on first use into `~/.config/silence/grammars/` from GitHub release as
 2. add the pack to `silence-grammar-packs/build.rs` and release assets in `.github/workflows/release.yml`
 3. wire `silence-grammars` `ensure()`; `every_grammar_loads_and_query_compiles`
    in `silence-strip-grammars` verifies query/ABI
+
+Multi-language files (e.g. Astro's TypeScript frontmatter, whose grammar exposes it
+as one opaque node) declare sub-language regions via `Lang::injections()` — silence
+re-parses each region with the inner grammar and merges the comments back.
