@@ -46,9 +46,16 @@ fn strips_subdirs_by_default_without_recursive_flag() -> TestResult {
     std::fs::write(dir.join("sub/deep/nested.ts"), "const b = 2; // remove\n")?;
 
     let out = run_silence(&dir, &["strip", "."], &[])?;
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
-    assert_eq!(std::fs::read_to_string(dir.join("top.ts"))?, "const a = 1;\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("top.ts"))?,
+        "const a = 1;\n"
+    );
     assert_eq!(
         std::fs::read_to_string(dir.join("sub/deep/nested.ts"))?,
         "const b = 2;\n",
