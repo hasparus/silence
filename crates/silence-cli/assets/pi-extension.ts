@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { isEditToolResult, isWriteToolResult } from "@earendil-works/pi-coding-agent";
 
 const BIN = __BIN__;
 
@@ -24,8 +23,10 @@ function noteFrom(stdout: string): string | undefined {
 export default function (pi: ExtensionAPI) {
   pi.on("tool_result", async (event) => {
     if (event.isError) return;
-    if (!isEditToolResult(event) && !isWriteToolResult(event)) return;
-    const note = noteFrom(await runSilence(["hook", event.input.path]));
+    if (event.toolName !== "edit" && event.toolName !== "write") return;
+    const path = event.input.path;
+    if (typeof path !== "string") return;
+    const note = noteFrom(await runSilence(["hook", path]));
     if (!note) return;
     return { content: [...event.content, { type: "text", text: note }] };
   });

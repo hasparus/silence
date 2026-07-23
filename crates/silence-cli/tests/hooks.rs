@@ -487,8 +487,21 @@ fn generated_plugin_and_extension_have_verified_field_names() -> TestResult {
         "pi extension must subscribe to the tool_result event"
     );
     assert!(
-        pi_extension.contains("isEditToolResult") && pi_extension.contains("isWriteToolResult"),
-        "pi extension must narrow edit/write tool results"
+        pi_extension.contains("@earendil-works/pi-coding-agent"),
+        "pi extension must use the current official package"
+    );
+    assert!(
+        !pi_extension.contains("@mariozechner/pi-coding-agent"),
+        "pi extension must not reference the legacy package"
+    );
+    assert!(
+        pi_extension.contains(r#"event.toolName !== "edit""#)
+            && pi_extension.contains(r#"event.toolName !== "write""#),
+        "pi extension must select edit/write results without runtime helper imports"
+    );
+    assert!(
+        !pi_extension.contains("isEditToolResult") && !pi_extension.contains("isWriteToolResult"),
+        "pi extension must not require runtime helpers"
     );
     assert!(
         pi_extension.contains("event.input.path"),
