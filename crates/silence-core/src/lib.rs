@@ -342,6 +342,16 @@ mod tests {
     }
 
     #[test]
+    fn jsx_machine_markers_survive_while_prose_goes() -> TestResult {
+        let src = "<div>\n      {/* impeccable-variants-start cd383158 */}\n      {/* the card */}\n      <Card />\n      {/* impeccable-variants-end cd383158 */}\n    </div>\n";
+        let out = strip_default(src, Lang::Tsx)?;
+        assert!(out.contains("impeccable-variants-start cd383158"));
+        assert!(out.contains("impeccable-variants-end cd383158"));
+        assert!(!out.contains("the card"));
+        Ok(())
+    }
+
+    #[test]
     fn comment_marker_inside_string_is_not_removed() -> TestResult {
         let src = r#"let url = "http://example.com"; // strip me"#;
         let out = strip_default(src, Lang::Rust)?;

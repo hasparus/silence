@@ -109,7 +109,9 @@ impl PreserveConfig {
             }
         }
         if self.directives
-            && (looks_like_doc_comment(comment_text) || looks_like_directive(comment_text))
+            && (looks_like_doc_comment(comment_text)
+                || looks_like_directive(comment_text)
+                || looks_like_marker(comment_text))
         {
             return true;
         }
@@ -154,9 +156,52 @@ fn looks_like_directive(text: &str) -> bool {
     false
 }
 
+/// Markers another tool reads back — `impeccable-variants-start cd383158`,
+/// `prettier-ignore-start`, `codegen-end`. Deleting one silently breaks the
+/// tool that writes between the pair, and they are not prose: a couple of
+/// identifier-shaped tokens, every one of them carrying a separator or a
+/// digit, so an ordinary word anywhere disqualifies the comment.
+fn looks_like_marker(text: &str) -> bool {
+    const SEPARATORS: [char; 6] = ['-', '_', ':', '/', '.', '#'];
+
+    let separated = |t: &str| t.contains(SEPARATORS);
+    let alphanumeric =
+        |t: &str| t.chars().any(char::is_alphabetic) && t.chars().any(|c: char| c.is_ascii_digit());
+
+    let tokens: Vec<&str> = comment_body(text).split_whitespace().collect();
+    if tokens.is_empty() || tokens.len() > 3 {
+        return false;
+    }
+
+    tokens.iter().any(|t| separated(t)) && tokens.iter().all(|t| separated(t) || alphanumeric(t))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paired_machine_markers_are_preserved_by_default() {
+        let c = PreserveConfig::default();
+        assert!(c.should_preserve("/* impeccable-variants-start cd383158 */"));
+        assert!(c.should_preserve("/* impeccable-variants-end cd383158 */"));
+        assert!(c.should_preserve("<!-- region-start build-info -->"));
+        assert!(c.should_preserve("// codegen-end"));
+    }
+
+    #[test]
+    fn hyphenated_prose_is_not_mistaken_for_a_marker() {
+        let c = PreserveConfig::default();
+        assert!(!c.should_preserve("// well-known trick here"));
+        assert!(!c.should_preserve("// e.g. this one"));
+        assert!(!c.should_preserve("// don't do this"));
+    }
+
+    #[test]
+    fn markers_go_away_with_directive_detection_off() {
+        let c = PreserveConfig::with_patterns(vec!["TODO".into()]);
+        assert!(!c.should_preserve("/* impeccable-variants-start cd383158 */"));
+    }
 
     #[test]
     fn literal_substring_match() {
