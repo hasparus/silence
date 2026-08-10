@@ -87,6 +87,12 @@ directive** — body starting with `@`, shaped `namespace:value`, or an XML-ish
 `<tag … />` (so `@ts-ignore`, `//go:embed`, `/// <reference />` survive
 without a rule each). A `#!` shebang on line 1 is never removed.
 
+**Machine markers** are kept too: up to three identifier-shaped tokens, each
+carrying a separator or a digit, so the paired sentinels other tools write
+between (`{/* impeccable-variants-start cd383158 */}`, `// prettier-ignore-start`)
+survive. One ordinary word disqualifies the comment, so `// well-known trick
+here` still goes.
+
 `.silence.toml` (searched cwd → git root → `~/.config/.silence.toml`):
 
 ```toml
