@@ -5,7 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::git;
-use crate::hook_input;
+use crate::hook_input::{self, HookJob, PatchScope};
 use crate::strip::{lang_for, strip_file, LineRanges, StripOpts, StripOutcome, WriteMode};
 
 enum HookSkip {
@@ -15,58 +15,66 @@ enum HookSkip {
     OutsideRepo(PathBuf),
 }
 
-struct GitState {
-    root: PathBuf,
-    ranges: HashMap<PathBuf, LineRanges>,
+fn repo_root() -> Option<PathBuf> {
+    let root = git::root().ok()?;
+    Some(root.canonicalize().unwrap_or(root))
 }
 
-fn git_state() -> Option<GitState> {
-    let ch = git::changes(git::Scope::All).ok()?;
-    let root = ch.root.canonicalize().unwrap_or(ch.root);
+/// Every uncommitted line in the repo, used only for harnesses that do not
+/// report what their write touched. Deferred because it diffs the whole tree.
+fn git_ranges(root: &Path) -> HashMap<PathBuf, LineRanges> {
+    let Ok(ch) = git::changes(git::Scope::All) else {
+        return HashMap::new();
+    };
     let mut ranges = HashMap::new();
     for (rel, r) in ch.files {
         let abs = root.join(rel);
         let key = abs.canonicalize().unwrap_or(abs);
         ranges.insert(key, r);
     }
-    Some(GitState { root, ranges })
+    ranges
 }
 
-fn hook_targets(mut targets: Vec<PathBuf>, state: Option<&GitState>) -> Vec<PathBuf> {
-    targets.sort();
-    targets.dedup();
-    let mut kept = Vec::with_capacity(targets.len());
-    for path in targets {
+fn hook_targets(jobs: Vec<HookJob>, root: Option<&Path>) -> Vec<HookJob> {
+    let mut kept = Vec::with_capacity(jobs.len());
+    for job in jobs {
+        let path = &job.path;
         if !path.is_file() {
             eprintln!("silence: skip {}: not a file", path.display());
             continue;
         }
-        if let Some(s) = state {
+        if let Some(root) = root {
             match path.canonicalize() {
-                Ok(canon) if canon.starts_with(&s.root) => {}
+                Ok(canon) if canon.starts_with(root) => {}
                 _ => {
-                    log_skip(HookSkip::OutsideRepo(path));
+                    log_skip(HookSkip::OutsideRepo(job.path));
                     continue;
                 }
             }
         }
-        if lang_for(&path).is_none() {
-            log_skip(HookSkip::UnsupportedLang(path));
+        if lang_for(path).is_none() {
+            log_skip(HookSkip::UnsupportedLang(job.path));
             continue;
         }
-        kept.push(path);
+        kept.push(job);
     }
     kept
 }
 
 pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
-    let state = git_state();
-    let paths = if explicit.is_empty() {
-        read_stdin_paths()
+    let root = repo_root();
+    let jobs = if explicit.is_empty() {
+        read_stdin_jobs()
     } else {
-        explicit.to_vec()
+        explicit
+            .iter()
+            .map(|path| HookJob {
+                path: path.clone(),
+                scope: PatchScope::Unknown,
+            })
+            .collect()
     };
-    let targets = hook_targets(paths, state.as_ref());
+    let targets = hook_targets(jobs, root.as_deref());
     if targets.is_empty() {
         return;
     }
@@ -80,10 +88,19 @@ pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
     };
 
     let mut stripped: Vec<(PathBuf, usize)> = Vec::new();
-    for path in targets {
-        let Some(ranges) = hook_line_ranges(&path, state.as_ref()) else {
-            log_skip(HookSkip::NotInGitChanges(path));
-            continue;
+    let mut fallback = None;
+    for HookJob { path, scope } in targets {
+        let ranges = match scope {
+            PatchScope::WholeFile => Vec::new(),
+            PatchScope::Added(ranges) if ranges.is_empty() => continue,
+            PatchScope::Added(ranges) => ranges,
+            PatchScope::Unknown => {
+                let Some(ranges) = hook_line_ranges(&path, root.as_deref(), &mut fallback) else {
+                    log_skip(HookSkip::NotInGitChanges(path));
+                    continue;
+                };
+                ranges
+            }
         };
         let file_opts = StripOpts {
             line_ranges: ranges,
@@ -153,16 +170,21 @@ fn log_skip(skip: HookSkip) {
     }
 }
 
-fn hook_line_ranges(path: &Path, state: Option<&GitState>) -> Option<LineRanges> {
-    let Some(s) = state else {
+fn hook_line_ranges(
+    path: &Path,
+    root: Option<&Path>,
+    cache: &mut Option<HashMap<PathBuf, LineRanges>>,
+) -> Option<LineRanges> {
+    let Some(root) = root else {
         return Some(Vec::new());
     };
+    let ranges = cache.get_or_insert_with(|| git_ranges(root));
     let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    s.ranges.get(&canon).cloned()
+    ranges.get(&canon).cloned()
 }
 
-fn read_stdin_paths() -> Vec<PathBuf> {
-    match read_stdin().and_then(|input| hook_input::paths_from_stdin(&input)) {
+fn read_stdin_jobs() -> Vec<HookJob> {
+    match read_stdin().and_then(|input| hook_input::jobs_from_stdin(&input)) {
         Ok(paths) => paths,
         Err(e) => {
             eprintln!("silence: skip hook stdin: {e}");

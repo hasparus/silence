@@ -219,6 +219,49 @@ fn hook_reads_file_path_from_stdin_json() -> TestResult {
     Ok(())
 }
 
+/// A whole-file `Write` puts every line in the git diff, so the git fallback
+/// would strip comments the agent only carried over. The harness patch says
+/// which lines it actually added.
+#[test]
+fn hook_uses_structured_patch_and_spares_untouched_comments() -> TestResult {
+    let repo = tmp("hook-structured-patch")?;
+    git(&repo, &["init", "-q"])?;
+    std::fs::write(
+        repo.join("a.rs"),
+        "fn a() {} // human comment, never committed\nfn b() {} // agent slop\n",
+    )?;
+
+    let path = repo.join("a.rs");
+    let path_str = serde_json::to_string(&path.to_string_lossy().to_string())?;
+    let payload = format!(
+        "{{\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Write\",\
+          \"tool_input\":{{\"file_path\":{path_str}}},\
+          \"tool_response\":{{\"type\":\"update\",\"filePath\":{path_str},\
+          \"structuredPatch\":[{{\"newStart\":1,\"newLines\":2,\
+          \"lines\":[\" fn a() {{}} // human comment, never committed\",\
+          \"+fn b() {{}} // agent slop\"]}}]}}}}"
+    );
+    let mut child = Command::new(silence_bin())
+        .args(["hook"])
+        .current_dir(&repo)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .as_mut()
+        .ok_or("child stdin must be open")?
+        .write_all(payload.as_bytes())?;
+    let out = child.wait_with_output()?;
+    assert!(out.status.success());
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.rs"))?,
+        "fn a() {} // human comment, never committed\nfn b() {}\n"
+    );
+    Ok(())
+}
+
 #[test]
 fn install_hook_uses_claude_write_edit_and_multiedit_matcher() -> TestResult {
     let home = tmp("claude-matcher-home")?;

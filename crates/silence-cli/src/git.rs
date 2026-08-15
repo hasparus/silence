@@ -15,6 +15,14 @@ pub struct GitChanges {
     pub files: HashMap<PathBuf, Vec<(usize, usize)>>,
 }
 
+pub fn root() -> Result<PathBuf> {
+    let repo = Repository::discover(".").context("not inside a git repository")?;
+    Ok(repo
+        .workdir()
+        .context("bare repositories are not supported")?
+        .to_path_buf())
+}
+
 pub fn changes(scope: Scope) -> Result<GitChanges> {
     let repo = Repository::discover(".").context("not inside a git repository")?;
     let root = repo
