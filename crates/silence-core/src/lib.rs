@@ -1,8 +1,10 @@
+use std::collections::{HashMap, HashSet};
+
 use silence_langs::Lang;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
 mod preserve;
-pub use preserve::{PreserveConfig, DEFAULT_PRESERVE_PATTERNS};
+pub use preserve::{MarkerHalf, PreserveConfig, DEFAULT_PRESERVE_PATTERNS};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -200,10 +202,42 @@ fn in_ranges(comment: &Comment, ranges: &[(usize, usize)]) -> bool {
         .any(|&(s, e)| comment.start_row <= e && comment.end_row >= s)
 }
 
+/// Comments that are one half of a marker pair, by start byte.
+///
+/// A lone `foo-start` is not a marker — it is a tool's fence only when the
+/// matching `foo-end` is in the file too. That is what separates
+/// `codegen-start` from ordinary hyphenated prose like `// front-end only`,
+/// and it cannot be seen from one comment at a time.
+fn paired_markers(comments: &[Comment], opts: &Options) -> HashSet<usize> {
+    if !opts.preserve.directives_enabled() {
+        return HashSet::new();
+    }
+    let halves: Vec<(usize, String, MarkerHalf)> = comments
+        .iter()
+        .filter_map(|c| {
+            preserve::marker_half(&c.text).map(|(stem, half)| (c.start_byte, stem, half))
+        })
+        .collect();
+    let mut seen: HashMap<&str, (bool, bool)> = HashMap::new();
+    for (_, stem, half) in &halves {
+        let entry = seen.entry(stem.as_str()).or_default();
+        match half {
+            MarkerHalf::Open => entry.0 = true,
+            MarkerHalf::Close => entry.1 = true,
+        }
+    }
+    halves
+        .iter()
+        .filter(|(_, stem, _)| seen.get(stem.as_str()).is_some_and(|&(o, c)| o && c))
+        .map(|(start, _, _)| *start)
+        .collect()
+}
+
 /// # Errors
 /// Returns an error if comment extraction fails (grammar load or parse error).
 pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error> {
     let comments = find_comments(source, lang)?;
+    let markers = paired_markers(&comments, opts);
 
     let mut to_remove: Vec<&Comment> = Vec::new();
     let mut preserved = 0usize;
@@ -214,7 +248,7 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
         if !opts.kinds.allows(c.kind) {
             continue;
         }
-        if opts.preserve.should_preserve(&c.text) {
+        if opts.preserve.should_preserve(&c.text) || markers.contains(&c.start_byte) {
             preserved += 1;
             continue;
         }
@@ -339,6 +373,45 @@ mod tests {
 
     fn strip_default(src: &str, lang: Lang) -> Result<String, Error> {
         Ok(strip(src, lang, &Options::default())?.output)
+    }
+
+    /// The pair is what protects the pair. A sentinel with no partner in the
+    /// file is indistinguishable from prose, so it is treated as prose.
+    #[test]
+    fn only_a_sentinel_with_its_partner_survives() -> TestResult {
+        let src = "let a = 1; // codegen-start\nlet b = 2; // slop\nlet c = 3; // codegen-end\n";
+        let out = strip_default(src, Lang::Rust)?;
+        assert!(out.contains("codegen-start"), "{out}");
+        assert!(out.contains("codegen-end"), "{out}");
+        assert!(!out.contains("slop"), "{out}");
+
+        let lone = strip_default("let a = 1; // codegen-end\n", Lang::Rust)?;
+        assert_eq!(lone, "let a = 1;\n");
+        Ok(())
+    }
+
+    /// front-end, cold-start and friends have a sentinel's exact shape. Nothing
+    /// but the missing partner separates them from a real marker.
+    #[test]
+    fn hyphenated_compounds_are_still_prose() -> TestResult {
+        let src = "let a = 1; // front-end only\nlet b = 2; // cold-start path\nlet c = 3; // dead-end\nlet d = 4; // Back-End\n";
+        let out = strip_default(src, Lang::Rust)?;
+        assert_eq!(out, "let a = 1;\nlet b = 2;\nlet c = 3;\nlet d = 4;\n");
+        Ok(())
+    }
+
+    #[test]
+    fn markers_go_away_with_directive_detection_off() -> TestResult {
+        let src = "let a = 1; // codegen-start\nlet b = 2; // codegen-end\n";
+        let opts = Options {
+            preserve: PreserveConfig::empty(),
+            ..Default::default()
+        };
+        assert_eq!(
+            strip(src, Lang::Rust, &opts)?.output,
+            "let a = 1;\nlet b = 2;\n"
+        );
+        Ok(())
     }
 
     #[test]
