@@ -32,8 +32,12 @@ impl GitFallback {
         }
     }
 
-    fn root(&self) -> Option<&Path> {
-        self.root.as_deref()
+    /// Whether this path is one the fallback can speak about at all. Outside a
+    /// repository every file is, since there is nothing to be outside of.
+    fn covers(&self, path: &Path) -> bool {
+        self.root
+            .as_deref()
+            .is_none_or(|root| path.starts_with(root))
     }
 
     /// `None` only when git positively reports the file as unchanged — there is
@@ -91,28 +95,39 @@ fn dedupe_by_canonical_path(jobs: &mut Vec<HookJob>) {
     });
 }
 
-/// Only the git fallback needs a repository, so the containment check applies to
-/// jobs that will use it. A job that already knows which lines the write added
-/// does not care where the file lives.
-fn hook_targets(mut jobs: Vec<HookJob>, root: Option<&Path>) -> Vec<HookJob> {
+/// Settles every question about a job in one place: which file it really names,
+/// whether we can strip it at all, and which of its lines are in scope. Asking
+/// git happens here too, so "does this job need a repository" is decided once,
+/// where the answer is used, rather than predicted by an earlier pass.
+fn resolve(mut jobs: Vec<HookJob>, fallback: &GitFallback) -> Vec<(PathBuf, Lines)> {
     dedupe_by_canonical_path(&mut jobs);
-    let mut kept = Vec::with_capacity(jobs.len());
-    for job in jobs {
-        if !job.path.is_file() {
-            log_skip(HookSkip::NotAFile(job.path));
+    let mut resolved = Vec::with_capacity(jobs.len());
+    for HookJob { path, lines } in jobs {
+        if !path.is_file() {
+            log_skip(HookSkip::NotAFile(path));
             continue;
         }
-        if job.lines.is_none() && root.is_some_and(|root| !job.path.starts_with(root)) {
-            log_skip(HookSkip::OutsideRepo(job.path));
+        if lang_for(&path).is_none() {
+            log_skip(HookSkip::UnsupportedLang(path));
             continue;
         }
-        if lang_for(&job.path).is_none() {
-            log_skip(HookSkip::UnsupportedLang(job.path));
-            continue;
-        }
-        kept.push(job);
+        let lines = match lines {
+            Some(lines) => lines,
+            None if fallback.covers(&path) => {
+                let Some(lines) = fallback.lines_for(&path) else {
+                    log_skip(HookSkip::NotInGitChanges(path));
+                    continue;
+                };
+                lines
+            }
+            None => {
+                log_skip(HookSkip::OutsideRepo(path));
+                continue;
+            }
+        };
+        resolved.push((path, lines));
     }
-    kept
+    resolved
 }
 
 pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
@@ -128,11 +143,6 @@ pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
             })
             .collect()
     };
-    let targets = hook_targets(jobs, fallback.root());
-    if targets.is_empty() {
-        return;
-    }
-
     let opts = |lines| StripOpts {
         line_mode: LineMode::Collapse,
         preserve: preserve.clone(),
@@ -142,11 +152,7 @@ pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
     };
 
     let mut stripped: Vec<(PathBuf, usize)> = Vec::new();
-    for HookJob { path, lines } in targets {
-        let Some(lines) = lines.or_else(|| fallback.lines_for(&path)) else {
-            log_skip(HookSkip::NotInGitChanges(path));
-            continue;
-        };
+    for (path, lines) in resolve(jobs, &fallback) {
         match strip_file(&path, &opts(lines)) {
             StripOutcome::Hook { removed } => stripped.push((path, removed)),
             StripOutcome::Unchanged | StripOutcome::Checked { .. } | StripOutcome::Wrote { .. } => {
