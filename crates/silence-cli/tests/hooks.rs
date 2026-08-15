@@ -3,7 +3,7 @@ mod common;
 use std::io::Write;
 use std::process::Command;
 
-use common::{git, run_silence, silence_bin, tmp, TestResult};
+use common::{git, run_hook_stdin, run_silence, silence_bin, tmp, TestResult};
 
 #[test]
 fn install_hook_merges_into_existing_claude_settings_json() -> TestResult {
@@ -232,33 +232,100 @@ fn hook_uses_structured_patch_and_spares_untouched_comments() -> TestResult {
     )?;
 
     let path = repo.join("a.rs");
-    let path_str = serde_json::to_string(&path.to_string_lossy().to_string())?;
-    let payload = format!(
-        "{{\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Write\",\
-          \"tool_input\":{{\"file_path\":{path_str}}},\
-          \"tool_response\":{{\"type\":\"update\",\"filePath\":{path_str},\
-          \"structuredPatch\":[{{\"newStart\":1,\"newLines\":2,\
-          \"lines\":[\" fn a() {{}} // human comment, never committed\",\
-          \"+fn b() {{}} // agent slop\"]}}]}}}}"
-    );
-    let mut child = Command::new(silence_bin())
-        .args(["hook"])
-        .current_dir(&repo)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("child stdin must be open")?
-        .write_all(payload.as_bytes())?;
-    let out = child.wait_with_output()?;
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
+        "tool_input": { "file_path": path.to_string_lossy() },
+        "tool_response": {
+            "type": "update",
+            "filePath": path.to_string_lossy(),
+            "structuredPatch": [{
+                "newStart": 1,
+                "newLines": 2,
+                "lines": [
+                    " fn a() {} // human comment, never committed",
+                    "+fn b() {} // agent slop",
+                ],
+            }],
+        },
+    })
+    .to_string();
+
+    let out = run_hook_stdin(&repo, &payload)?;
     assert!(out.status.success());
     assert_eq!(
         std::fs::read_to_string(repo.join("a.rs"))?,
         "fn a() {} // human comment, never committed\nfn b() {}\n"
     );
+    Ok(())
+}
+
+/// The tool input can name the file relatively while the response names it
+/// absolutely. Both must land on one job, or the un-patched copy falls back to
+/// git and strips the whole uncommitted diff behind the patched one.
+#[test]
+fn hook_collapses_relative_and_absolute_spellings_of_one_file() -> TestResult {
+    let repo = tmp("hook-alias-paths")?;
+    git(&repo, &["init", "-q"])?;
+    std::fs::write(
+        repo.join("a.rs"),
+        "fn a() {} // human comment, never committed\nfn b() {} // agent slop\n",
+    )?;
+
+    let abs = repo.join("a.rs").canonicalize()?;
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Edit",
+        "tool_input": { "file_path": "a.rs" },
+        "tool_response": {
+            "filePath": abs.to_string_lossy(),
+            "structuredPatch": [{
+                "newStart": 1,
+                "newLines": 2,
+                "lines": [
+                    " fn a() {} // human comment, never committed",
+                    "+fn b() {} // agent slop",
+                ],
+            }],
+        },
+    })
+    .to_string();
+
+    let out = run_hook_stdin(&repo, &payload)?;
+    assert!(out.status.success());
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.rs"))?,
+        "fn a() {} // human comment, never committed\nfn b() {}\n"
+    );
+    Ok(())
+}
+
+/// An empty patch on an update means the write changed nothing. The empty
+/// `LineRanges` that reaches the core means the opposite — whole file — so this
+/// case has to be dropped before it gets there.
+#[test]
+fn hook_strips_nothing_when_the_write_changed_nothing() -> TestResult {
+    let repo = tmp("hook-empty-patch")?;
+    git(&repo, &["init", "-q"])?;
+    let contents = "fn a() {} // untouched\nfn b() {} // also untouched\n";
+    std::fs::write(repo.join("a.rs"), contents)?;
+
+    let abs = repo.join("a.rs").canonicalize()?;
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
+        "tool_input": { "file_path": abs.to_string_lossy() },
+        "tool_response": {
+            "type": "update",
+            "filePath": abs.to_string_lossy(),
+            "structuredPatch": [],
+        },
+    })
+    .to_string();
+
+    let out = run_hook_stdin(&repo, &payload)?;
+    assert!(out.status.success());
+    assert_eq!(std::fs::read_to_string(repo.join("a.rs"))?, contents);
     Ok(())
 }
 

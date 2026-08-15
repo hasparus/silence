@@ -15,20 +15,21 @@ pub struct GitChanges {
     pub files: HashMap<PathBuf, Vec<(usize, usize)>>,
 }
 
-pub fn root() -> Result<PathBuf> {
-    let repo = Repository::discover(".").context("not inside a git repository")?;
-    Ok(repo
-        .workdir()
-        .context("bare repositories are not supported")?
-        .to_path_buf())
-}
-
-pub fn changes(scope: Scope) -> Result<GitChanges> {
+fn open() -> Result<(Repository, PathBuf)> {
     let repo = Repository::discover(".").context("not inside a git repository")?;
     let root = repo
         .workdir()
         .context("bare repositories are not supported")?
         .to_path_buf();
+    Ok((repo, root))
+}
+
+pub fn root() -> Result<PathBuf> {
+    Ok(open()?.1)
+}
+
+pub fn changes(scope: Scope) -> Result<GitChanges> {
+    let (repo, root) = open()?;
 
     let mut files: HashMap<PathBuf, Vec<(usize, usize)>> = HashMap::new();
 
@@ -79,15 +80,12 @@ pub fn stage_paths(paths: &[PathBuf]) -> Result<()> {
         return Ok(());
     }
 
-    let repo = Repository::discover(".").context("not inside a git repository")?;
-    let root = repo
-        .workdir()
-        .context("bare repositories are not supported")?;
+    let (repo, root) = open()?;
     let mut index = repo.index().context("failed to open git index")?;
 
     for path in paths {
         let rel = path
-            .strip_prefix(root)
+            .strip_prefix(&root)
             .with_context(|| format!("{} is outside git workdir", path.display()))?;
         index
             .add_path(rel)

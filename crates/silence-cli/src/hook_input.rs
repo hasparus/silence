@@ -85,8 +85,6 @@ impl HookStdin {
             paths.push(path);
         }
 
-        paths.sort();
-        paths.dedup();
         paths
             .into_iter()
             .map(|path| {
@@ -111,14 +109,16 @@ impl ToolResponse {
 }
 
 /// Line numbers refer to the post-write file, so `-` lines do not advance the
-/// counter and `+` lines are what the agent put there.
+/// counter and `+` lines are what the agent put there. jsdiff also emits
+/// `\ No newline at end of file` as a hunk line; it is a marker, not content,
+/// and counting it would shift every range after it.
 fn added_ranges(hunks: &[Hunk]) -> LineRanges {
     let mut out: LineRanges = Vec::new();
     for hunk in hunks {
         let mut line = hunk.new_start;
         for raw in &hunk.lines {
             match raw.chars().next() {
-                Some('-') => {}
+                Some('-' | '\\') => {}
                 Some('+') => {
                     match out.last_mut() {
                         Some(last) if last.1 + 1 == line => last.1 = line,
@@ -230,7 +230,6 @@ mod tests {
                   {"newStart":10,"newLines":4,"lines":[
                     " def a():","-    return 1","+    # new","+    return 2"]}]}}"#,
         )?;
-        assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].scope, PatchScope::Added(vec![(11, 12)]));
         Ok(())
     }
@@ -242,6 +241,17 @@ mod tests {
                  {"newStart":1,"newLines":2,"lines":["-a","-b","+c"," d","+e"]}]}}"#,
         )?;
         assert_eq!(jobs[0].scope, PatchScope::Added(vec![(1, 1), (3, 3)]));
+        Ok(())
+    }
+
+    #[test]
+    fn no_newline_marker_does_not_shift_ranges() -> TestResult {
+        let jobs = jobs_from_stdin(
+            r#"{"tool_response":{"filePath":"a.rs","structuredPatch":[
+                 {"newStart":1,"newLines":2,"lines":[
+                   "-old","\\ No newline at end of file","+agent"," human"]}]}}"#,
+        )?;
+        assert_eq!(jobs[0].scope, PatchScope::Added(vec![(1, 1)]));
         Ok(())
     }
 

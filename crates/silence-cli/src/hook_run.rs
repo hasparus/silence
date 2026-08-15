@@ -35,26 +35,37 @@ fn git_ranges(root: &Path) -> HashMap<PathBuf, LineRanges> {
     ranges
 }
 
-fn hook_targets(mut jobs: Vec<HookJob>, root: Option<&Path>) -> Vec<HookJob> {
-    jobs.sort_by(|a, b| a.path.cmp(&b.path));
+/// A harness can name the same file twice — relative in the tool input,
+/// absolute in the response. Canonical paths collapse those into one job, and
+/// the copy carrying a patch wins over the one that would fall back to git;
+/// otherwise the fallback would strip the whole uncommitted diff behind it.
+fn dedupe_by_canonical_path(jobs: &mut Vec<HookJob>) {
+    for job in jobs.iter_mut() {
+        if let Ok(canon) = job.path.canonicalize() {
+            job.path = canon;
+        }
+    }
+    jobs.sort_by(|a, b| {
+        a.path.cmp(&b.path).then_with(|| {
+            matches!(a.scope, PatchScope::Unknown).cmp(&matches!(b.scope, PatchScope::Unknown))
+        })
+    });
     jobs.dedup_by(|a, b| a.path == b.path);
+}
+
+fn hook_targets(mut jobs: Vec<HookJob>, root: Option<&Path>) -> Vec<HookJob> {
+    dedupe_by_canonical_path(&mut jobs);
     let mut kept = Vec::with_capacity(jobs.len());
     for job in jobs {
-        let path = &job.path;
-        if !path.is_file() {
-            eprintln!("silence: skip {}: not a file", path.display());
+        if !job.path.is_file() {
+            eprintln!("silence: skip {}: not a file", job.path.display());
             continue;
         }
-        if let Some(root) = root {
-            match path.canonicalize() {
-                Ok(canon) if canon.starts_with(root) => {}
-                _ => {
-                    log_skip(HookSkip::OutsideRepo(job.path));
-                    continue;
-                }
-            }
+        if root.is_some_and(|root| !job.path.starts_with(root)) {
+            log_skip(HookSkip::OutsideRepo(job.path));
+            continue;
         }
-        if lang_for(path).is_none() {
+        if lang_for(&job.path).is_none() {
             log_skip(HookSkip::UnsupportedLang(job.path));
             continue;
         }
@@ -180,9 +191,10 @@ fn hook_line_ranges(
     let Some(root) = root else {
         return Some(Vec::new());
     };
-    let ranges = cache.get_or_insert_with(|| git_ranges(root));
-    let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    ranges.get(&canon).cloned()
+    cache
+        .get_or_insert_with(|| git_ranges(root))
+        .get(path)
+        .cloned()
 }
 
 fn read_stdin_jobs() -> Vec<HookJob> {

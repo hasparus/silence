@@ -61,7 +61,9 @@ silence llm # print a short guide for llms
 **`silence hook`** — agent post-edit hook
 
 - `[path]…` — optional paths; reads the agent's stdin event when omitted
-- strips comments inside the uncommitted change; always exits 0
+- strips comments inside the lines the write added, when the agent reports them
+  (Claude Code's `structuredPatch`); falls back to the uncommitted change
+  otherwise. always exits 0
 - feeds the model a short note so it learns the comments were stripped and
   stops re-adding them: Claude Code and Codex read the `additionalContext`
   stdout JSON natively; the Opencode and Pi plugins splice it into the tool result
