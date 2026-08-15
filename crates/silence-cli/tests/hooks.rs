@@ -263,7 +263,7 @@ fn hook_uses_structured_patch_and_spares_untouched_comments() -> TestResult {
 }
 
 #[test]
-fn install_hook_uses_claude_write_edit_and_multiedit_matcher() -> TestResult {
+fn install_hook_uses_claude_write_edit_matcher() -> TestResult {
     let home = tmp("claude-matcher-home")?;
     let cwd = tmp("claude-matcher-cwd")?;
 
@@ -283,7 +283,7 @@ fn install_hook_uses_claude_write_edit_and_multiedit_matcher() -> TestResult {
     )?)?;
     assert_eq!(
         settings["hooks"]["PostToolUse"][0]["matcher"].as_str(),
-        Some("Write|Edit|MultiEdit")
+        Some("Write|Edit")
     );
     Ok(())
 }

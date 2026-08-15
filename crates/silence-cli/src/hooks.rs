@@ -111,7 +111,7 @@ fn agent_kind(agent: Agent) -> AgentKind {
         Agent::Claude => AgentKind::Json {
             name: "Claude Code",
             path: claude_path,
-            matcher: "Write|Edit|MultiEdit",
+            matcher: "Write|Edit",
             note: None,
             agent: JsonAgent::Claude,
         },
