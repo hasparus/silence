@@ -1,4 +1,7 @@
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use std::collections::{HashMap, HashSet};
+
+use crate::Comment;
 
 pub const DEFAULT_PRESERVE_PATTERNS: &[&str] = &[
     "TODO",
@@ -92,9 +95,51 @@ impl PreserveConfig {
         }
     }
 
-    #[must_use]
-    pub fn directives_enabled(&self) -> bool {
-        self.directives
+    /// Preservation decided against a whole file at once. The pairing rule has
+    /// to see every comment to know whether a sentinel has its partner, which
+    /// [`Self::should_preserve`] cannot do one comment at a time.
+    pub(crate) fn for_file(&self, comments: &[Comment]) -> FilePreserve<'_> {
+        FilePreserve {
+            config: self,
+            markers: self.paired_markers(comments),
+        }
+    }
+
+    /// Comments that are one half of a real marker pair, by start byte. A pair
+    /// is real when both halves share a stem *and* the opening one comes first —
+    /// otherwise nothing is fenced between them and it is a coincidence.
+    fn paired_markers(&self, comments: &[Comment]) -> HashSet<usize> {
+        if !self.directives {
+            return HashSet::new();
+        }
+        let halves: Vec<(usize, String, MarkerHalf)> = comments
+            .iter()
+            .filter_map(|c| marker_half(&c.text).map(|(stem, half)| (c.start_byte, stem, half)))
+            .collect();
+
+        let mut first_open: HashMap<&str, usize> = HashMap::new();
+        let mut last_close: HashMap<&str, usize> = HashMap::new();
+        for (byte, stem, half) in &halves {
+            match half {
+                MarkerHalf::Open => {
+                    first_open.entry(stem.as_str()).or_insert(*byte);
+                }
+                MarkerHalf::Close => {
+                    last_close.insert(stem.as_str(), *byte);
+                }
+            }
+        }
+
+        halves
+            .iter()
+            .filter(|(_, stem, _)| {
+                matches!(
+                    (first_open.get(stem.as_str()), last_close.get(stem.as_str())),
+                    (Some(open), Some(close)) if open < close
+                )
+            })
+            .map(|(byte, _, _)| *byte)
+            .collect()
     }
 
     #[must_use]
@@ -125,6 +170,19 @@ impl PreserveConfig {
             return true;
         }
         false
+    }
+}
+
+/// One file's preservation verdict, so the per-comment answer and the
+/// whole-file pairing rule are asked in one place.
+pub(crate) struct FilePreserve<'a> {
+    config: &'a PreserveConfig,
+    markers: HashSet<usize>,
+}
+
+impl FilePreserve<'_> {
+    pub(crate) fn should_preserve(&self, comment: &Comment) -> bool {
+        self.config.should_preserve(&comment.text) || self.markers.contains(&comment.start_byte)
     }
 }
 
@@ -171,8 +229,7 @@ fn looks_like_directive(text: &str) -> bool {
 ///
 /// Shape alone cannot tell `codegen-end` from `front-end`; only the partner
 /// can, which is why this reports the stem instead of a verdict.
-#[must_use]
-pub fn marker_half(text: &str) -> Option<(String, MarkerHalf)> {
+fn marker_half(text: &str) -> Option<(String, MarkerHalf)> {
     const HALVES: [(&str, MarkerHalf); 4] = [
         ("start", MarkerHalf::Open),
         ("begin", MarkerHalf::Open),
@@ -180,7 +237,7 @@ pub fn marker_half(text: &str) -> Option<(String, MarkerHalf)> {
         ("finish", MarkerHalf::Close),
     ];
 
-    let sentinel = comment_body(text).split_whitespace().next()?;
+    let sentinel = sentinel_token(comment_body(text))?;
     if !identifier(sentinel) {
         return None;
     }
@@ -192,8 +249,18 @@ pub fn marker_half(text: &str) -> Option<(String, MarkerHalf)> {
     })
 }
 
+/// A banner fence puts its sentinel on its own line behind a `*` gutter, so the
+/// first token of the comment is not always the first token of its body.
+fn sentinel_token(body: &str) -> Option<&str> {
+    body.lines()
+        .map(|line| line.trim().trim_start_matches('*').trim())
+        .find(|line| !line.is_empty())?
+        .split_whitespace()
+        .next()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarkerHalf {
+enum MarkerHalf {
     Open,
     Close,
 }

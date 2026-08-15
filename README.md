@@ -98,10 +98,16 @@ without a rule each). A `#!` shebang on line 1 is never removed.
 **Machine markers** survive too, so the paired sentinels other tools write
 between (`{/* impeccable-variants-start cd383158 */}` … `{/* impeccable-variants-end
 cd383158 */}`) are not stripped out from under them. A sentinel counts only when
-its partner is in the same file: `-start`/`-begin` needs its `-end`/`-finish`, and
-vice versa. That is deliberate — `// front-end only` and `// cold-start path` have
-a sentinel's exact shape, and only the missing partner tells them apart from
-`// codegen-start`. A lone half is treated as prose and goes.
+its partner is in the same file and opens before it closes: `-start`/`-begin`
+needs its `-end`/`-finish`, and vice versa. That is deliberate — `// front-end only`
+and `// cold-start path` have a sentinel's exact shape, and only the missing
+partner tells them apart from `// codegen-start`. A lone half is treated as prose
+and goes.
+
+The rule is suffix-anchored, so prefix forms (`BEGIN … / END …`) are not detected;
+colon forms (`codegen:start`) are kept by the directive rule instead and are not
+subject to the pairing requirement. A file holding both `// week-start` and
+`// week-end` keeps both — over-preserving is the safe direction.
 
 `.silence.toml` (searched cwd → git root → `~/.config/.silence.toml`):
 
