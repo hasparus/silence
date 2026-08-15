@@ -1,95 +1,157 @@
 use serde_json::json;
-use silence_core::{CommentKinds, LineMode, PreserveConfig};
+use silence_core::{CommentKinds, LineMode, Lines, PreserveConfig};
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::git;
-use crate::hook_input;
-use crate::strip::{lang_for, strip_file, LineRanges, StripOpts, StripOutcome, WriteMode};
+use crate::hook_input::{self, HookJob};
+use crate::strip::{lang_for, strip_file, StripOpts, StripOutcome, WriteMode};
 
 enum HookSkip {
+    NotAFile(PathBuf),
     NotInGitChanges(PathBuf),
     UnsupportedLang(PathBuf),
     StripFailed(PathBuf, String),
     OutsideRepo(PathBuf),
 }
 
-struct GitState {
-    root: PathBuf,
-    ranges: HashMap<PathBuf, LineRanges>,
+/// The uncommitted diff, for harnesses that do not report what their write
+/// touched. The scan covers the whole tree, so it runs only if a job needs it.
+struct GitFallback {
+    root: Option<PathBuf>,
+    changed: OnceCell<Option<HashMap<PathBuf, Lines>>>,
 }
 
-fn git_state() -> Option<GitState> {
-    let ch = git::changes(git::Scope::All).ok()?;
-    let root = ch.root.canonicalize().unwrap_or(ch.root);
-    let mut ranges = HashMap::new();
-    for (rel, r) in ch.files {
-        let abs = root.join(rel);
-        let key = abs.canonicalize().unwrap_or(abs);
-        ranges.insert(key, r);
-    }
-    Some(GitState { root, ranges })
-}
-
-fn hook_targets(mut targets: Vec<PathBuf>, state: Option<&GitState>) -> Vec<PathBuf> {
-    targets.sort();
-    targets.dedup();
-    let mut kept = Vec::with_capacity(targets.len());
-    for path in targets {
-        if !path.is_file() {
-            eprintln!("silence: skip {}: not a file", path.display());
-            continue;
+impl GitFallback {
+    fn discover() -> GitFallback {
+        GitFallback {
+            root: git::root().ok().map(|r| r.canonicalize().unwrap_or(r)),
+            changed: OnceCell::new(),
         }
-        if let Some(s) = state {
-            match path.canonicalize() {
-                Ok(canon) if canon.starts_with(&s.root) => {}
-                _ => {
-                    log_skip(HookSkip::OutsideRepo(path));
-                    continue;
-                }
+    }
+
+    /// One answer per path, including which skip applies when there is none.
+    ///
+    /// When git cannot tell us anything at all (no repository, or the diff
+    /// failed) the whole file is the agent's as far as we can know. Only a file
+    /// git positively reports as unchanged gives no basis to strip.
+    fn lines_for(&self, path: &Path) -> Result<Lines, HookSkip> {
+        let Some(root) = self.root.as_deref() else {
+            return Ok(Lines::All);
+        };
+        if !path.starts_with(root) {
+            return Err(HookSkip::OutsideRepo(path.to_path_buf()));
+        }
+        match self.changed.get_or_init(|| Self::scan(root)) {
+            None => Ok(Lines::All),
+            Some(changed) => changed
+                .get(path)
+                .cloned()
+                .ok_or_else(|| HookSkip::NotInGitChanges(path.to_path_buf())),
+        }
+    }
+
+    fn scan(root: &Path) -> Option<HashMap<PathBuf, Lines>> {
+        let changes = git::changes(git::Scope::All)
+            .inspect_err(|e| eprintln!("silence: git scan failed, stripping whole files: {e}"))
+            .ok()?;
+        Some(
+            changes
+                .files
+                .into_iter()
+                .map(|(rel, lines)| {
+                    let abs = root.join(rel);
+                    (abs.canonicalize().unwrap_or(abs), lines)
+                })
+                .collect(),
+        )
+    }
+}
+
+/// A harness can name the same file twice — relative in the tool input,
+/// absolute in the response. Canonical paths collapse those into one job, and
+/// the copy carrying a patch wins over the one that would fall back to git;
+/// otherwise the fallback would strip the whole uncommitted diff behind it.
+///
+/// An event describes at most one patch, so at most one job ever carries lines
+/// and there is never a choice between two of them.
+fn dedupe_by_canonical_path(jobs: &mut Vec<HookJob>) {
+    for job in jobs.iter_mut() {
+        if let Ok(canon) = job.path.canonicalize() {
+            job.path = canon;
+        }
+    }
+    jobs.sort_by(|a, b| a.path.cmp(&b.path));
+    jobs.dedup_by(|dropped, kept| {
+        if dropped.path != kept.path {
+            return false;
+        }
+        kept.lines = kept.lines.take().or_else(|| dropped.lines.take());
+        true
+    });
+}
+
+/// Settles every question about a job in one place: which file it really names,
+/// whether we can strip it at all, and which of its lines are in scope. Asking
+/// git happens here too, so "does this job need a repository" is decided once,
+/// where the answer is used, rather than predicted by an earlier pass. Every
+/// reason to skip comes back as a value rather than a branch out of the loop.
+fn resolve(mut jobs: Vec<HookJob>, fallback: &GitFallback) -> Vec<(PathBuf, Lines)> {
+    dedupe_by_canonical_path(&mut jobs);
+    jobs.into_iter()
+        .filter_map(|job| match resolve_job(job, fallback) {
+            Ok(resolved) => Some(resolved),
+            Err(skip) => {
+                log_skip(skip);
+                None
             }
-        }
-        if lang_for(&path).is_none() {
-            log_skip(HookSkip::UnsupportedLang(path));
-            continue;
-        }
-        kept.push(path);
+        })
+        .collect()
+}
+
+fn resolve_job(
+    HookJob { path, lines }: HookJob,
+    fallback: &GitFallback,
+) -> Result<(PathBuf, Lines), HookSkip> {
+    if !path.is_file() {
+        return Err(HookSkip::NotAFile(path));
     }
-    kept
+    if lang_for(&path).is_none() {
+        return Err(HookSkip::UnsupportedLang(path));
+    }
+    let lines = match lines {
+        Some(lines) => lines,
+        None => fallback.lines_for(&path)?,
+    };
+    Ok((path, lines))
 }
 
 pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
-    let state = git_state();
-    let paths = if explicit.is_empty() {
-        read_stdin_paths()
+    let fallback = GitFallback::discover();
+    let jobs = if explicit.is_empty() {
+        read_stdin_jobs()
     } else {
-        explicit.to_vec()
+        explicit
+            .iter()
+            .map(|path| HookJob {
+                path: path.clone(),
+                lines: None,
+            })
+            .collect()
     };
-    let targets = hook_targets(paths, state.as_ref());
-    if targets.is_empty() {
-        return;
-    }
-
-    let opts = StripOpts {
+    let opts = |lines| StripOpts {
         line_mode: LineMode::Collapse,
         preserve: preserve.clone(),
-        line_ranges: Vec::new(),
+        lines,
         kinds: CommentKinds::default(),
         write: WriteMode::Hook,
     };
 
     let mut stripped: Vec<(PathBuf, usize)> = Vec::new();
-    for path in targets {
-        let Some(ranges) = hook_line_ranges(&path, state.as_ref()) else {
-            log_skip(HookSkip::NotInGitChanges(path));
-            continue;
-        };
-        let file_opts = StripOpts {
-            line_ranges: ranges,
-            ..opts.clone()
-        };
-        match strip_file(&path, &file_opts) {
+    for (path, lines) in resolve(jobs, &fallback) {
+        match strip_file(&path, &opts(lines)) {
             StripOutcome::Hook { removed } => stripped.push((path, removed)),
             StripOutcome::Unchanged | StripOutcome::Checked { .. } | StripOutcome::Wrote { .. } => {
             }
@@ -135,6 +197,9 @@ fn context_payload(total: usize) -> serde_json::Value {
 
 fn log_skip(skip: HookSkip) {
     match skip {
+        HookSkip::NotAFile(path) => {
+            eprintln!("silence: skip {}: not a file", path.display());
+        }
         HookSkip::NotInGitChanges(path) => {
             eprintln!(
                 "silence: skip {}: not in uncommitted changes",
@@ -153,17 +218,9 @@ fn log_skip(skip: HookSkip) {
     }
 }
 
-fn hook_line_ranges(path: &Path, state: Option<&GitState>) -> Option<LineRanges> {
-    let Some(s) = state else {
-        return Some(Vec::new());
-    };
-    let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    s.ranges.get(&canon).cloned()
-}
-
-fn read_stdin_paths() -> Vec<PathBuf> {
-    match read_stdin().and_then(|input| hook_input::paths_from_stdin(&input)) {
-        Ok(paths) => paths,
+fn read_stdin_jobs() -> Vec<HookJob> {
+    match read_stdin().and_then(|input| hook_input::jobs_from_stdin(&input)) {
+        Ok(jobs) => jobs,
         Err(e) => {
             eprintln!("silence: skip hook stdin: {e}");
             Vec::new()

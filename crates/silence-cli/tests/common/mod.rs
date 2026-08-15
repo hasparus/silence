@@ -25,6 +25,25 @@ pub fn run_silence(dir: &Path, args: &[&str], extra_env: &[(&str, &Path)]) -> TR
     Ok(cmd.output()?)
 }
 
+#[allow(dead_code)]
+pub fn run_hook_stdin(dir: &Path, payload: &str) -> TResult<Output> {
+    use std::io::Write;
+
+    let mut child = Command::new(silence_bin())
+        .args(["hook"])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .as_mut()
+        .ok_or("child stdin must be open")?
+        .write_all(payload.as_bytes())?;
+    Ok(child.wait_with_output()?)
+}
+
 pub fn git(dir: &Path, args: &[&str]) -> TResult<()> {
     let out = Command::new("git").args(args).current_dir(dir).output()?;
     assert!(

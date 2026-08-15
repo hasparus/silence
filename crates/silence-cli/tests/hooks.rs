@@ -1,9 +1,6 @@
 mod common;
 
-use std::io::Write;
-use std::process::Command;
-
-use common::{git, run_silence, silence_bin, tmp, TestResult};
+use common::{git, run_hook_stdin, run_silence, tmp, TestResult};
 
 #[test]
 fn install_hook_merges_into_existing_claude_settings_json() -> TestResult {
@@ -198,19 +195,7 @@ fn hook_reads_file_path_from_stdin_json() -> TestResult {
     let payload = format!(
         "{{\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Edit\",\"tool_input\":{{\"file_path\":{path_str}}}}}"
     );
-    let mut child = Command::new(silence_bin())
-        .args(["hook"])
-        .current_dir(&repo)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("child stdin must be open")?
-        .write_all(payload.as_bytes())?;
-    let out = child.wait_with_output()?;
+    let out = run_hook_stdin(&repo, &payload)?;
     assert!(out.status.success());
     assert_eq!(
         std::fs::read_to_string(repo.join("a.rs"))?,
@@ -219,8 +204,185 @@ fn hook_reads_file_path_from_stdin_json() -> TestResult {
     Ok(())
 }
 
+/// A whole-file `Write` puts every line in the git diff, so the git fallback
+/// would strip comments the agent only carried over. The harness patch says
+/// which lines it actually added.
 #[test]
-fn install_hook_uses_claude_write_edit_and_multiedit_matcher() -> TestResult {
+fn hook_uses_structured_patch_and_spares_untouched_comments() -> TestResult {
+    let repo = tmp("hook-structured-patch")?;
+    git(&repo, &["init", "-q"])?;
+    std::fs::write(
+        repo.join("a.rs"),
+        "fn a() {} // human comment, never committed\nfn b() {} // agent slop\n",
+    )?;
+
+    let path = repo.join("a.rs");
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
+        "tool_input": { "file_path": path.to_string_lossy() },
+        "tool_response": {
+            "type": "update",
+            "filePath": path.to_string_lossy(),
+            "structuredPatch": [{
+                "newStart": 1,
+                "newLines": 2,
+                "lines": [
+                    " fn a() {} // human comment, never committed",
+                    "+fn b() {} // agent slop",
+                ],
+            }],
+        },
+    })
+    .to_string();
+
+    let out = run_hook_stdin(&repo, &payload)?;
+    assert!(out.status.success());
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.rs"))?,
+        "fn a() {} // human comment, never committed\nfn b() {}\n"
+    );
+    Ok(())
+}
+
+/// The tool input can name the file relatively while the response names it
+/// absolutely. Both must land on one job, or the un-patched copy falls back to
+/// git and strips the whole uncommitted diff behind the patched one.
+#[test]
+fn hook_collapses_relative_and_absolute_spellings_of_one_file() -> TestResult {
+    let repo = tmp("hook-alias-paths")?;
+    git(&repo, &["init", "-q"])?;
+    std::fs::write(
+        repo.join("a.rs"),
+        "fn a() {} // human comment, never committed\nfn b() {} // agent slop\n",
+    )?;
+
+    let abs = repo.join("a.rs").canonicalize()?;
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Edit",
+        "tool_input": { "file_path": "a.rs" },
+        "tool_response": {
+            "filePath": abs.to_string_lossy(),
+            "structuredPatch": [{
+                "newStart": 1,
+                "newLines": 2,
+                "lines": [
+                    " fn a() {} // human comment, never committed",
+                    "+fn b() {} // agent slop",
+                ],
+            }],
+        },
+    })
+    .to_string();
+
+    let out = run_hook_stdin(&repo, &payload)?;
+    assert!(out.status.success());
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.rs"))?,
+        "fn a() {} // human comment, never committed\nfn b() {}\n"
+    );
+    Ok(())
+}
+
+/// A patch says exactly which lines the agent wrote, so it needs no repository.
+/// Without one there is nothing to scope by, and a file outside the root is not
+/// ours to touch.
+#[test]
+fn a_file_outside_the_repo_needs_a_patch_to_be_stripped() -> TestResult {
+    let repo = tmp("hook-outside-repo")?;
+    git(&repo, &["init", "-q"])?;
+    let outside = tmp("hook-outside-target")?;
+    let path = outside.join("a.rs");
+
+    std::fs::write(&path, "fn a() {} // agent slop\n")?;
+    let bare = serde_json::json!({
+        "tool_input": { "file_path": path.canonicalize()?.to_string_lossy() },
+    })
+    .to_string();
+    assert!(run_hook_stdin(&repo, &bare)?.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&path)?,
+        "fn a() {} // agent slop\n",
+        "no patch and outside the repo: nothing to scope by"
+    );
+
+    let patched = serde_json::json!({
+        "tool_response": {
+            "filePath": path.canonicalize()?.to_string_lossy(),
+            "structuredPatch": [{
+                "newStart": 1,
+                "newLines": 1,
+                "lines": ["+fn a() {} // agent slop"],
+            }],
+        },
+    })
+    .to_string();
+    assert!(run_hook_stdin(&repo, &patched)?.status.success());
+    assert_eq!(std::fs::read_to_string(&path)?, "fn a() {}\n");
+    Ok(())
+}
+
+/// `tool_response` is a tool's own output and varies by harness. An unreadable
+/// one must not take the rest of the event down with it.
+#[test]
+fn hook_still_strips_when_the_tool_response_is_unreadable() -> TestResult {
+    for response in [
+        "\"File written\"",
+        r#"{"structuredPatch":"@@ -1 +1 @@"}"#,
+        r#"{"structuredPatch":[{"lines":["+x"]}]}"#,
+    ] {
+        let repo = tmp("hook-bad-response")?;
+        git(&repo, &["init", "-q"])?;
+        std::fs::write(repo.join("a.rs"), "fn a() {} // agent slop\n")?;
+
+        let path = repo.join("a.rs").canonicalize()?;
+        let payload = format!(
+            r#"{{"tool_input":{{"file_path":{}}},"tool_response":{response}}}"#,
+            serde_json::to_string(&path.to_string_lossy())?
+        );
+
+        let out = run_hook_stdin(&repo, &payload)?;
+        assert!(out.status.success());
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.rs"))?,
+            "fn a() {}\n",
+            "a bad tool_response ({response}) must not disable the tool_input path"
+        );
+    }
+    Ok(())
+}
+
+/// An empty patch on an update means the write changed nothing, which must not
+/// be confused with having no line information at all.
+#[test]
+fn hook_strips_nothing_when_the_write_changed_nothing() -> TestResult {
+    let repo = tmp("hook-empty-patch")?;
+    git(&repo, &["init", "-q"])?;
+    let contents = "fn a() {} // untouched\nfn b() {} // also untouched\n";
+    std::fs::write(repo.join("a.rs"), contents)?;
+
+    let abs = repo.join("a.rs").canonicalize()?;
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
+        "tool_input": { "file_path": abs.to_string_lossy() },
+        "tool_response": {
+            "type": "update",
+            "filePath": abs.to_string_lossy(),
+            "structuredPatch": [],
+        },
+    })
+    .to_string();
+
+    let out = run_hook_stdin(&repo, &payload)?;
+    assert!(out.status.success());
+    assert_eq!(std::fs::read_to_string(repo.join("a.rs"))?, contents);
+    Ok(())
+}
+
+#[test]
+fn install_hook_uses_claude_write_edit_matcher() -> TestResult {
     let home = tmp("claude-matcher-home")?;
     let cwd = tmp("claude-matcher-cwd")?;
 
@@ -240,7 +402,7 @@ fn install_hook_uses_claude_write_edit_and_multiedit_matcher() -> TestResult {
     )?)?;
     assert_eq!(
         settings["hooks"]["PostToolUse"][0]["matcher"].as_str(),
-        Some("Write|Edit|MultiEdit")
+        Some("Write|Edit")
     );
     Ok(())
 }
@@ -522,19 +684,7 @@ fn hook_extracts_path_from_opencode_patch_text_payload() -> TestResult {
       }
     }"#;
 
-    let mut child = Command::new(silence_bin())
-        .args(["hook"])
-        .current_dir(&repo)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("child stdin must be open")?
-        .write_all(payload.as_bytes())?;
-    let out = child.wait_with_output()?;
+    let out = run_hook_stdin(&repo, payload)?;
     assert!(out.status.success());
     assert_eq!(
         std::fs::read_to_string(repo.join("a.rs"))?,
@@ -564,19 +714,7 @@ fn hook_extracts_path_from_codex_apply_patch_payload() -> TestResult {
       }
     }"#;
 
-    let mut child = Command::new(silence_bin())
-        .args(["hook"])
-        .current_dir(&repo)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("child stdin must be open")?
-        .write_all(payload.as_bytes())?;
-    let out = child.wait_with_output()?;
+    let out = run_hook_stdin(&repo, payload)?;
     assert!(out.status.success());
     assert_eq!(
         std::fs::read_to_string(repo.join("a.rs"))?,

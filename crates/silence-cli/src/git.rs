@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use git2::{Diff, DiffOptions, Repository};
+use silence_core::Lines;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -12,17 +13,27 @@ pub enum Scope {
 
 pub struct GitChanges {
     pub root: PathBuf,
-    pub files: HashMap<PathBuf, Vec<(usize, usize)>>,
+    pub files: HashMap<PathBuf, Lines>,
 }
 
-pub fn changes(scope: Scope) -> Result<GitChanges> {
+fn open() -> Result<(Repository, PathBuf)> {
     let repo = Repository::discover(".").context("not inside a git repository")?;
     let root = repo
         .workdir()
         .context("bare repositories are not supported")?
         .to_path_buf();
+    Ok((repo, root))
+}
 
-    let mut files: HashMap<PathBuf, Vec<(usize, usize)>> = HashMap::new();
+pub fn root() -> Result<PathBuf> {
+    Ok(open()?.1)
+}
+
+pub fn changes(scope: Scope) -> Result<GitChanges> {
+    let (repo, root) = open()?;
+
+    let mut hunks: HashMap<PathBuf, Vec<(usize, usize)>> = HashMap::new();
+    let mut untracked: HashSet<PathBuf> = HashSet::new();
 
     match scope {
         Scope::Staged => {
@@ -34,8 +45,8 @@ pub fn changes(scope: Scope) -> Result<GitChanges> {
                 .diff_index_to_workdir(None, Some(&mut diff_opts()))
                 .context("failed to diff unstaged changes")?;
             let dirty = diff_paths(&unstaged);
-            collect_hunks(&staged, &mut files)?;
-            files.retain(|path, _| {
+            collect_hunks(&staged, &mut hunks)?;
+            hunks.retain(|path, _| {
                 let keep = !dirty.contains(path);
                 if !keep {
                     eprintln!(
@@ -50,20 +61,42 @@ pub fn changes(scope: Scope) -> Result<GitChanges> {
             let diff = repo
                 .diff_index_to_workdir(None, Some(&mut diff_opts()))
                 .context("failed to diff unstaged changes")?;
-            collect_hunks(&diff, &mut files)?;
-            collect_untracked(&repo, &mut files)?;
+            collect_hunks(&diff, &mut hunks)?;
+            collect_untracked(&repo, &mut untracked)?;
         }
         Scope::All => {
             let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
             let all = repo
                 .diff_tree_to_workdir(head_tree.as_ref(), Some(&mut diff_opts()))
                 .context("failed to diff uncommitted changes")?;
-            collect_hunks(&all, &mut files)?;
-            collect_untracked(&repo, &mut files)?;
+            collect_hunks(&all, &mut hunks)?;
+            collect_untracked(&repo, &mut untracked)?;
         }
     }
 
-    Ok(GitChanges { root, files })
+    Ok(GitChanges {
+        root,
+        files: merge(hunks, untracked),
+    })
+}
+
+/// A path can be both diffed and untracked — a staged delete that was recreated
+/// on disk reports as `D` and `??` at once. Under `Scope::All` it then has real
+/// hunk ranges, which are narrower than `All` and describe the same file, so
+/// they win. Under `Scope::Unstaged` the index has no such file, so the whole
+/// thing genuinely is an addition and `All` is right.
+fn merge(
+    hunks: HashMap<PathBuf, Vec<(usize, usize)>>,
+    untracked: HashSet<PathBuf>,
+) -> HashMap<PathBuf, Lines> {
+    let mut files: HashMap<PathBuf, Lines> = hunks
+        .into_iter()
+        .map(|(path, ranges)| (path, Lines::Ranges(ranges)))
+        .collect();
+    for path in untracked {
+        files.entry(path).or_insert(Lines::All);
+    }
+    files
 }
 
 pub fn stage_paths(paths: &[PathBuf]) -> Result<()> {
@@ -71,15 +104,12 @@ pub fn stage_paths(paths: &[PathBuf]) -> Result<()> {
         return Ok(());
     }
 
-    let repo = Repository::discover(".").context("not inside a git repository")?;
-    let root = repo
-        .workdir()
-        .context("bare repositories are not supported")?;
+    let (repo, root) = open()?;
     let mut index = repo.index().context("failed to open git index")?;
 
     for path in paths {
         let rel = path
-            .strip_prefix(root)
+            .strip_prefix(&root)
             .with_context(|| format!("{} is outside git workdir", path.display()))?;
         index
             .add_path(rel)
@@ -123,17 +153,14 @@ fn collect_hunks(diff: &Diff, files: &mut HashMap<PathBuf, Vec<(usize, usize)>>)
     Ok(())
 }
 
-fn collect_untracked(
-    repo: &Repository,
-    files: &mut HashMap<PathBuf, Vec<(usize, usize)>>,
-) -> Result<()> {
+fn collect_untracked(repo: &Repository, untracked: &mut HashSet<PathBuf>) -> Result<()> {
     let mut opts = git2::StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
     let statuses = repo.statuses(Some(&mut opts))?;
     for entry in statuses.iter() {
         if entry.status().is_wt_new() {
             if let Ok(p) = entry.path() {
-                files.entry(PathBuf::from(p)).or_default();
+                untracked.insert(PathBuf::from(p));
             }
         }
     }

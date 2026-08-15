@@ -1,11 +1,17 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
+use silence_core::Lines;
+
+/// `tool_response` stays untyped here on purpose: it is a tool's own output, the
+/// most harness-variable part of the payload. Parsing it strictly would let one
+/// unexpected shape fail the whole event and strip nothing at all.
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct HookStdin {
     args: Option<HookArgs>,
     tool_input: Option<HookArgs>,
+    tool_response: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -19,24 +25,111 @@ struct HookArgs {
     input: Option<String>,
 }
 
-pub fn paths_from_stdin(input: &str) -> Result<Vec<PathBuf>, String> {
+/// Claude Code reports what a `Write`/`Edit` actually changed in the tool result:
+/// `structuredPatch` carries the hunks, `type` distinguishes a new file from a
+/// rewrite. Other harnesses send neither, so the job carries no lines and the
+/// caller falls back to git.
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct ToolResponse {
+    #[serde(alias = "filePath")]
+    file_path: Option<String>,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    #[serde(rename = "structuredPatch")]
+    structured_patch: Option<Vec<Hunk>>,
+}
+
+/// Strict on purpose: a hunk we cannot read means the patch cannot be trusted,
+/// and the whole `tool_response` degrades to the git fallback rather than
+/// producing ranges anchored at the wrong lines.
+#[derive(Debug, Deserialize)]
+struct Hunk {
+    #[serde(rename = "newStart")]
+    new_start: usize,
+    lines: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct HookJob {
+    pub path: PathBuf,
+    /// What the harness said the write touched. `None` means it said nothing,
+    /// so the caller falls back to git.
+    pub lines: Option<Lines>,
+}
+
+/// May return more than one job for the same file — the tool input and the tool
+/// response can spell its path differently. Callers must collapse them by
+/// canonical path before stripping, or the file gets stripped twice.
+pub fn jobs_from_stdin(input: &str) -> Result<Vec<HookJob>, String> {
     if input.trim().is_empty() {
         return Ok(Vec::new());
     }
     let event: HookStdin = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    Ok(event.into_paths())
+    Ok(event.into_jobs())
 }
 
 impl HookStdin {
-    fn into_paths(self) -> Vec<PathBuf> {
-        let mut out = Vec::new();
+    fn into_jobs(self) -> Vec<HookJob> {
+        let mut paths = Vec::new();
         if let Some(args) = self.args.or(self.tool_input) {
-            args.push_paths(&mut out);
+            args.push_paths(&mut paths);
         }
-        out.sort();
-        out.dedup();
-        out
+
+        let mut jobs: Vec<HookJob> = paths
+            .into_iter()
+            .map(|path| HookJob { path, lines: None })
+            .collect();
+
+        let patched = self
+            .tool_response
+            .and_then(|raw| serde_json::from_value::<ToolResponse>(raw).ok())
+            .and_then(ToolResponse::into_patched);
+        if let Some((path, lines)) = patched {
+            jobs.push(HookJob {
+                path,
+                lines: Some(lines),
+            });
+        }
+        jobs
     }
+}
+
+impl ToolResponse {
+    fn into_patched(self) -> Option<(PathBuf, Lines)> {
+        let hunks = self.structured_patch?;
+        let lines = if self.kind.as_deref() == Some("create") {
+            Lines::All
+        } else {
+            Lines::Ranges(added_ranges(&hunks))
+        };
+        Some((PathBuf::from(self.file_path?), lines))
+    }
+}
+
+/// Line numbers refer to the post-write file, so `-` lines do not advance the
+/// counter and `+` lines are what the agent put there. jsdiff also emits
+/// `\ No newline at end of file` as a hunk line; it is a marker, not content,
+/// and counting it would shift every range after it.
+fn added_ranges(hunks: &[Hunk]) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for hunk in hunks {
+        let mut line = hunk.new_start;
+        for raw in &hunk.lines {
+            match raw.chars().next() {
+                Some('-' | '\\') => {}
+                Some('+') => {
+                    match out.last_mut() {
+                        Some(last) if last.1.saturating_add(1) == line => last.1 = line,
+                        _ => out.push((line, line)),
+                    }
+                    line = line.saturating_add(1);
+                }
+                _ => line = line.saturating_add(1),
+            }
+        }
+    }
+    out
 }
 
 impl HookArgs {
@@ -74,8 +167,24 @@ fn paths_from_patch(patch: &str, out: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// The patched job is appended, not merged — `hook_run` collapses the
+    /// duplicates by canonical path.
+    fn patched_job(input: &str) -> Result<Option<(PathBuf, Lines)>, String> {
+        Ok(jobs_from_stdin(input)?
+            .into_iter()
+            .find_map(|j| j.lines.map(|lines| (j.path, lines))))
+    }
+
+    fn paths_from_stdin(input: &str) -> Result<Vec<PathBuf>, String> {
+        Ok(jobs_from_stdin(input)?
+            .into_iter()
+            .map(|j| j.path)
+            .collect())
+    }
 
     #[test]
     fn claude_tool_input_file_path() -> TestResult {
@@ -112,5 +221,94 @@ mod tests {
     #[test]
     fn invalid_json_fails() {
         assert!(paths_from_stdin("{").is_err());
+    }
+
+    #[test]
+    fn no_tool_response_is_unknown() -> TestResult {
+        let jobs = jobs_from_stdin(r#"{"tool_input":{"file_path":"/tmp/a.rs"}}"#)?;
+        assert_eq!(jobs[0].lines, None);
+        Ok(())
+    }
+
+    #[test]
+    fn edit_patch_yields_added_lines_only() -> TestResult {
+        let patched = patched_job(
+            r#"{"tool_input":{"file_path":"/tmp/a.py"},
+                "tool_response":{"filePath":"/tmp/a.py","structuredPatch":[
+                  {"newStart":10,"newLines":4,"lines":[
+                    " def a():","-    return 1","+    # new","+    return 2"]}]}}"#,
+        )?;
+        assert_eq!(
+            patched,
+            Some((PathBuf::from("/tmp/a.py"), Lines::Ranges(vec![(11, 12)])))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_lines_do_not_advance_the_counter() -> TestResult {
+        let jobs = jobs_from_stdin(
+            r#"{"tool_response":{"filePath":"a.rs","structuredPatch":[
+                 {"newStart":1,"newLines":2,"lines":["-a","-b","+c"," d","+e"]}]}}"#,
+        )?;
+        assert_eq!(jobs[0].lines, Some(Lines::Ranges(vec![(1, 1), (3, 3)])));
+        Ok(())
+    }
+
+    #[test]
+    fn no_newline_marker_does_not_shift_ranges() -> TestResult {
+        let jobs = jobs_from_stdin(
+            r#"{"tool_response":{"filePath":"a.rs","structuredPatch":[
+                 {"newStart":1,"newLines":2,"lines":[
+                   "-old","\\ No newline at end of file","+agent"," human"]}]}}"#,
+        )?;
+        assert_eq!(jobs[0].lines, Some(Lines::Ranges(vec![(1, 1)])));
+        Ok(())
+    }
+
+    #[test]
+    fn a_degenerate_new_start_does_not_overflow() -> TestResult {
+        let jobs = jobs_from_stdin(
+            r#"{"tool_response":{"filePath":"a.rs","structuredPatch":[
+                 {"newStart":18446744073709551615,"lines":["+x","+y"]}]}}"#,
+        )?;
+        assert_eq!(
+            jobs[0].lines,
+            Some(Lines::Ranges(vec![(usize::MAX, usize::MAX)]))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn write_create_covers_the_whole_file() -> TestResult {
+        let jobs = jobs_from_stdin(
+            r#"{"tool_response":{"type":"create","filePath":"/tmp/n.rs","structuredPatch":[]}}"#,
+        )?;
+        assert_eq!(jobs[0].lines, Some(Lines::All));
+        Ok(())
+    }
+
+    #[test]
+    fn write_update_that_changed_nothing_is_empty() -> TestResult {
+        let jobs = jobs_from_stdin(
+            r#"{"tool_response":{"type":"update","filePath":"/tmp/n.rs","structuredPatch":[]}}"#,
+        )?;
+        assert_eq!(jobs[0].lines, Some(Lines::Ranges(Vec::new())));
+        Ok(())
+    }
+
+    #[test]
+    fn patch_scope_does_not_leak_to_other_paths() -> TestResult {
+        let jobs = jobs_from_stdin(
+            r#"{"tool_input":{"input":"*** Update File: b.rs\n"},
+                "tool_response":{"filePath":"a.rs","structuredPatch":[
+                  {"newStart":1,"newLines":1,"lines":["+x"]}]}}"#,
+        )?;
+        let b = jobs
+            .iter()
+            .find(|j| j.path == Path::new("b.rs"))
+            .ok_or("b.rs missing from jobs")?;
+        assert_eq!(b.lines, None);
+        Ok(())
     }
 }
