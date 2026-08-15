@@ -173,8 +173,10 @@ mod tests {
 
     /// The patched job is appended, not merged — `hook_run` collapses the
     /// duplicates by canonical path.
-    fn lines_from_stdin(input: &str) -> Result<Option<Lines>, String> {
-        Ok(jobs_from_stdin(input)?.into_iter().find_map(|j| j.lines))
+    fn patched_job(input: &str) -> Result<Option<(PathBuf, Lines)>, String> {
+        Ok(jobs_from_stdin(input)?
+            .into_iter()
+            .find_map(|j| j.lines.map(|lines| (j.path, lines))))
     }
 
     fn paths_from_stdin(input: &str) -> Result<Vec<PathBuf>, String> {
@@ -230,13 +232,16 @@ mod tests {
 
     #[test]
     fn edit_patch_yields_added_lines_only() -> TestResult {
-        let lines = lines_from_stdin(
+        let patched = patched_job(
             r#"{"tool_input":{"file_path":"/tmp/a.py"},
                 "tool_response":{"filePath":"/tmp/a.py","structuredPatch":[
                   {"newStart":10,"newLines":4,"lines":[
                     " def a():","-    return 1","+    # new","+    return 2"]}]}}"#,
         )?;
-        assert_eq!(lines, Some(Lines::Ranges(vec![(11, 12)])));
+        assert_eq!(
+            patched,
+            Some((PathBuf::from("/tmp/a.py"), Lines::Ranges(vec![(11, 12)])))
+        );
         Ok(())
     }
 

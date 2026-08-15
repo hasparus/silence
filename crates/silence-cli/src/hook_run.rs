@@ -72,6 +72,9 @@ impl GitFallback {
 /// absolute in the response. Canonical paths collapse those into one job, and
 /// the copy carrying a patch wins over the one that would fall back to git;
 /// otherwise the fallback would strip the whole uncommitted diff behind it.
+///
+/// An event describes at most one patch, so at most one job ever carries lines
+/// and there is never a choice between two of them.
 fn dedupe_by_canonical_path(jobs: &mut Vec<HookJob>) {
     for job in jobs.iter_mut() {
         if let Ok(canon) = job.path.canonicalize() {
@@ -80,12 +83,11 @@ fn dedupe_by_canonical_path(jobs: &mut Vec<HookJob>) {
     }
     jobs.sort_by(|a, b| a.path.cmp(&b.path));
     jobs.dedup_by(|dropped, kept| {
-        dropped.path == kept.path && {
-            if kept.lines.is_none() {
-                kept.lines = dropped.lines.take();
-            }
-            true
+        if dropped.path != kept.path {
+            return false;
         }
+        kept.lines = kept.lines.take().or_else(|| dropped.lines.take());
+        true
     });
 }
 
@@ -214,7 +216,7 @@ fn log_skip(skip: HookSkip) {
 
 fn read_stdin_jobs() -> Vec<HookJob> {
     match read_stdin().and_then(|input| hook_input::jobs_from_stdin(&input)) {
-        Ok(paths) => paths,
+        Ok(jobs) => jobs,
         Err(e) => {
             eprintln!("silence: skip hook stdin: {e}");
             Vec::new()
