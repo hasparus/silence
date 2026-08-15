@@ -158,22 +158,38 @@ fn looks_like_directive(text: &str) -> bool {
 
 /// Markers another tool reads back — `impeccable-variants-start cd383158`,
 /// `prettier-ignore-start`, `codegen-end`. Deleting one silently breaks the
-/// tool that writes between the pair, and they are not prose: a couple of
-/// identifier-shaped tokens, every one of them carrying a separator or a
-/// digit, so an ordinary word anywhere disqualifies the comment.
+/// tool that writes between the pair.
+///
+/// What makes a marker a marker is the pairing: a sentinel ending in `-start`
+/// or `-end` that some tool greps for, optionally followed by an id. Prose does
+/// not have that shape, so this asks for it directly rather than guessing from
+/// how punctuated a comment looks.
 fn looks_like_marker(text: &str) -> bool {
-    const SEPARATORS: [char; 6] = ['-', '_', ':', '/', '.', '#'];
+    const PAIRED: [&str; 3] = ["start", "end", "begin"];
+    const MAX_IDS: usize = 2;
 
-    let separated = |t: &str| t.contains(SEPARATORS);
-    let alphanumeric =
-        |t: &str| t.chars().any(char::is_alphabetic) && t.chars().any(|c: char| c.is_ascii_digit());
-
-    let tokens: Vec<&str> = comment_body(text).split_whitespace().collect();
-    if tokens.is_empty() || tokens.len() > 3 {
+    let mut tokens = comment_body(text).split_whitespace();
+    let Some(sentinel) = tokens.next() else {
         return false;
-    }
+    };
 
-    tokens.iter().any(|t| separated(t)) && tokens.iter().all(|t| separated(t) || alphanumeric(t))
+    let lowered = sentinel.to_ascii_lowercase();
+    let paired = PAIRED.iter().any(|suffix| {
+        lowered
+            .strip_suffix(suffix)
+            .is_some_and(|prefix| prefix.len() > 1 && prefix.ends_with(['-', '_', ':']))
+    });
+
+    paired && identifier(sentinel) && tokens.by_ref().take(MAX_IDS).all(identifier) && {
+        tokens.next().is_none()
+    }
+}
+
+fn identifier(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
 }
 
 #[cfg(test)]
@@ -190,11 +206,43 @@ mod tests {
     }
 
     #[test]
+    fn an_id_that_is_all_digits_still_marks() {
+        let c = PreserveConfig::default();
+        assert!(c.should_preserve("/* impeccable-variants-start 12345678 */"));
+        assert!(c.should_preserve("/* impeccable-variants-end 8675309 */"));
+    }
+
+    #[test]
     fn hyphenated_prose_is_not_mistaken_for_a_marker() {
         let c = PreserveConfig::default();
         assert!(!c.should_preserve("// well-known trick here"));
         assert!(!c.should_preserve("// e.g. this one"));
         assert!(!c.should_preserve("// don't do this"));
+    }
+
+    /// Short prose carrying punctuation is the most common shape of the comment
+    /// this tool exists to delete, so it must not read as machine output.
+    #[test]
+    fn punctuated_prose_is_not_mistaken_for_a_marker() {
+        let c = PreserveConfig::default();
+        for comment in [
+            "// broken.",
+            "// unused.",
+            "// legacy.",
+            "// no-op.",
+            "// wait...",
+            "/* fine. */",
+            "<!-- old. -->",
+            "// half-baked hack.",
+            "// two-way binding.",
+            "// self-explanatory.",
+            "// http://example.com",
+            "// src/foo/bar.ts",
+            "// end",
+            "// the end",
+        ] {
+            assert!(!c.should_preserve(comment), "{comment} should be stripped");
+        }
     }
 
     #[test]
