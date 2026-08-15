@@ -9,8 +9,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::git;
 use silence_grammars::paths::home_dir;
 
-pub type LineRange = (usize, usize);
-pub type LineRanges = Vec<LineRange>;
 pub type StripJob = (PathBuf, Lines);
 
 pub fn lang_for(path: &Path) -> Option<Lang> {

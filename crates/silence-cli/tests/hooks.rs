@@ -1,9 +1,6 @@
 mod common;
 
-use std::io::Write;
-use std::process::Command;
-
-use common::{git, run_hook_stdin, run_silence, silence_bin, tmp, TestResult};
+use common::{git, run_hook_stdin, run_silence, tmp, TestResult};
 
 #[test]
 fn install_hook_merges_into_existing_claude_settings_json() -> TestResult {
@@ -198,19 +195,7 @@ fn hook_reads_file_path_from_stdin_json() -> TestResult {
     let payload = format!(
         "{{\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Edit\",\"tool_input\":{{\"file_path\":{path_str}}}}}"
     );
-    let mut child = Command::new(silence_bin())
-        .args(["hook"])
-        .current_dir(&repo)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("child stdin must be open")?
-        .write_all(payload.as_bytes())?;
-    let out = child.wait_with_output()?;
+    let out = run_hook_stdin(&repo, &payload)?;
     assert!(out.status.success());
     assert_eq!(
         std::fs::read_to_string(repo.join("a.rs"))?,
@@ -297,6 +282,36 @@ fn hook_collapses_relative_and_absolute_spellings_of_one_file() -> TestResult {
         std::fs::read_to_string(repo.join("a.rs"))?,
         "fn a() {} // human comment, never committed\nfn b() {}\n"
     );
+    Ok(())
+}
+
+/// `tool_response` is a tool's own output and varies by harness. An unreadable
+/// one must not take the rest of the event down with it.
+#[test]
+fn hook_still_strips_when_the_tool_response_is_unreadable() -> TestResult {
+    for response in [
+        "\"File written\"",
+        r#"{"structuredPatch":"@@ -1 +1 @@"}"#,
+        r#"{"structuredPatch":[{"lines":["+x"]}]}"#,
+    ] {
+        let repo = tmp("hook-bad-response")?;
+        git(&repo, &["init", "-q"])?;
+        std::fs::write(repo.join("a.rs"), "fn a() {} // agent slop\n")?;
+
+        let path = repo.join("a.rs").canonicalize()?;
+        let payload = format!(
+            r#"{{"tool_input":{{"file_path":{}}},"tool_response":{response}}}"#,
+            serde_json::to_string(&path.to_string_lossy())?
+        );
+
+        let out = run_hook_stdin(&repo, &payload)?;
+        assert!(out.status.success());
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.rs"))?,
+            "fn a() {}\n",
+            "a bad tool_response ({response}) must not disable the tool_input path"
+        );
+    }
     Ok(())
 }
 
@@ -631,19 +646,7 @@ fn hook_extracts_path_from_opencode_patch_text_payload() -> TestResult {
       }
     }"#;
 
-    let mut child = Command::new(silence_bin())
-        .args(["hook"])
-        .current_dir(&repo)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("child stdin must be open")?
-        .write_all(payload.as_bytes())?;
-    let out = child.wait_with_output()?;
+    let out = run_hook_stdin(&repo, payload)?;
     assert!(out.status.success());
     assert_eq!(
         std::fs::read_to_string(repo.join("a.rs"))?,
@@ -673,19 +676,7 @@ fn hook_extracts_path_from_codex_apply_patch_payload() -> TestResult {
       }
     }"#;
 
-    let mut child = Command::new(silence_bin())
-        .args(["hook"])
-        .current_dir(&repo)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("child stdin must be open")?
-        .write_all(payload.as_bytes())?;
-    let out = child.wait_with_output()?;
+    let out = run_hook_stdin(&repo, payload)?;
     assert!(out.status.success());
     assert_eq!(
         std::fs::read_to_string(repo.join("a.rs"))?,

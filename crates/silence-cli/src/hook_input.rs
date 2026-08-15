@@ -3,14 +3,15 @@ use std::path::PathBuf;
 
 use silence_core::Lines;
 
-use crate::strip::LineRanges;
-
+/// `tool_response` stays untyped here on purpose: it is a tool's own output, the
+/// most harness-variable part of the payload. Parsing it strictly would let one
+/// unexpected shape fail the whole event and strip nothing at all.
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct HookStdin {
     args: Option<HookArgs>,
     tool_input: Option<HookArgs>,
-    tool_response: Option<ToolResponse>,
+    tool_response: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -39,14 +40,15 @@ struct ToolResponse {
     structured_patch: Option<Vec<Hunk>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
 struct Hunk {
     #[serde(rename = "newStart")]
     new_start: usize,
     lines: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct HookJob {
     pub path: PathBuf,
     /// What the harness said the write touched. `None` means it said nothing,
@@ -69,7 +71,10 @@ impl HookStdin {
             args.push_paths(&mut paths);
         }
 
-        let patched = self.tool_response.and_then(ToolResponse::into_patched);
+        let patched = self
+            .tool_response
+            .and_then(|raw| serde_json::from_value::<ToolResponse>(raw).ok())
+            .and_then(ToolResponse::into_patched);
         if let Some((path, _)) = &patched {
             paths.push(path.clone());
         }
@@ -103,8 +108,8 @@ impl ToolResponse {
 /// counter and `+` lines are what the agent put there. jsdiff also emits
 /// `\ No newline at end of file` as a hunk line; it is a marker, not content,
 /// and counting it would shift every range after it.
-fn added_ranges(hunks: &[Hunk]) -> LineRanges {
-    let mut out: LineRanges = Vec::new();
+fn added_ranges(hunks: &[Hunk]) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::new();
     for hunk in hunks {
         let mut line = hunk.new_start;
         for raw in &hunk.lines {

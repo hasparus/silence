@@ -64,6 +64,8 @@ silence llm # print a short guide for llms
 - strips comments inside the lines the write added, when the agent reports them
   (Claude Code's `structuredPatch`); falls back to the uncommitted change
   otherwise. always exits 0
+- those line numbers are recorded before hooks run, so if another post-write
+  hook rewrites the same file, run `silence hook` before it
 - feeds the model a short note so it learns the comments were stripped and
   stops re-adding them: Claude Code and Codex read the `additionalContext`
   stdout JSON natively; the Opencode and Pi plugins splice it into the tool result

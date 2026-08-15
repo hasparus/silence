@@ -19,39 +19,50 @@ enum HookSkip {
 /// The uncommitted diff, for harnesses that do not report what their write
 /// touched. The scan covers the whole tree, so it runs only if a job needs it.
 struct GitFallback {
-    root: PathBuf,
-    changed: OnceCell<HashMap<PathBuf, Lines>>,
+    root: Option<PathBuf>,
+    changed: OnceCell<Option<HashMap<PathBuf, Lines>>>,
 }
 
 impl GitFallback {
-    fn discover() -> Option<GitFallback> {
-        let root = git::root().ok()?;
-        Some(GitFallback {
-            root: root.canonicalize().unwrap_or(root),
+    fn discover() -> GitFallback {
+        GitFallback {
+            root: git::root().ok().map(|r| r.canonicalize().unwrap_or(r)),
             changed: OnceCell::new(),
-        })
+        }
     }
 
-    fn root(&self) -> &Path {
-        &self.root
+    fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
     }
 
-    /// `None` for a file with nothing uncommitted — there is no basis to strip it.
+    /// `None` only when git positively reports the file as unchanged — there is
+    /// no basis to strip it. When git cannot tell us anything at all (no
+    /// repository, or the diff failed) the whole file is the agent's as far as
+    /// we can know.
     fn lines_for(&self, path: &Path) -> Option<Lines> {
-        self.changed.get_or_init(|| self.scan()).get(path).cloned()
+        let Some(root) = self.root.as_deref() else {
+            return Some(Lines::All);
+        };
+        match self.changed.get_or_init(|| Self::scan(root)) {
+            None => Some(Lines::All),
+            Some(changed) => changed.get(path).cloned(),
+        }
     }
 
-    fn scan(&self) -> HashMap<PathBuf, Lines> {
-        let Ok(ch) = git::changes(git::Scope::All) else {
-            return HashMap::new();
-        };
-        ch.files
-            .into_iter()
-            .map(|(rel, lines)| {
-                let abs = self.root.join(rel);
-                (abs.canonicalize().unwrap_or(abs), lines)
-            })
-            .collect()
+    fn scan(root: &Path) -> Option<HashMap<PathBuf, Lines>> {
+        let changes = git::changes(git::Scope::All)
+            .inspect_err(|e| eprintln!("silence: git scan failed, stripping whole files: {e}"))
+            .ok()?;
+        Some(
+            changes
+                .files
+                .into_iter()
+                .map(|(rel, lines)| {
+                    let abs = root.join(rel);
+                    (abs.canonicalize().unwrap_or(abs), lines)
+                })
+                .collect(),
+        )
     }
 }
 
@@ -107,7 +118,7 @@ pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
             })
             .collect()
     };
-    let targets = hook_targets(jobs, fallback.as_ref().map(GitFallback::root));
+    let targets = hook_targets(jobs, fallback.root());
     if targets.is_empty() {
         return;
     }
@@ -122,7 +133,7 @@ pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
 
     let mut stripped: Vec<(PathBuf, usize)> = Vec::new();
     for HookJob { path, lines } in targets {
-        let Some(lines) = lines.or_else(|| fallback_lines(fallback.as_ref(), &path)) else {
+        let Some(lines) = lines.or_else(|| fallback.lines_for(&path)) else {
             log_skip(HookSkip::NotInGitChanges(path));
             continue;
         };
@@ -191,15 +202,6 @@ fn log_skip(skip: HookSkip) {
         HookSkip::OutsideRepo(path) => {
             eprintln!("silence: skip {}: outside repository root", path.display());
         }
-    }
-}
-
-/// Outside a repository there is nothing to diff against, so the whole file is
-/// the agent's as far as we can tell.
-fn fallback_lines(fallback: Option<&GitFallback>, path: &Path) -> Option<Lines> {
-    match fallback {
-        None => Some(Lines::All),
-        Some(git) => git.lines_for(path),
     }
 }
 
