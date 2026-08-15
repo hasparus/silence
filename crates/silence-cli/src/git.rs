@@ -74,15 +74,27 @@ pub fn changes(scope: Scope) -> Result<GitChanges> {
         }
     }
 
+    Ok(GitChanges {
+        root,
+        files: merge(hunks, untracked),
+    })
+}
+
+/// A path can be both diffed and untracked — a staged delete that was recreated
+/// on disk reports as `D` and `??` at once. Its hunk ranges are narrower than
+/// `All` and describe the same file, so they win.
+fn merge(
+    hunks: HashMap<PathBuf, Vec<(usize, usize)>>,
+    untracked: HashSet<PathBuf>,
+) -> HashMap<PathBuf, Lines> {
     let mut files: HashMap<PathBuf, Lines> = hunks
         .into_iter()
         .map(|(path, ranges)| (path, Lines::Ranges(ranges)))
         .collect();
     for path in untracked {
-        files.insert(path, Lines::All);
+        files.entry(path).or_insert(Lines::All);
     }
-
-    Ok(GitChanges { root, files })
+    files
 }
 
 pub fn stage_paths(paths: &[PathBuf]) -> Result<()> {

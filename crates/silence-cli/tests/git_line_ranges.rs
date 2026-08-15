@@ -77,3 +77,27 @@ fn changes_mode_widens_a_file_that_is_staged_and_modified() -> TestResult {
     );
     Ok(())
 }
+
+/// A staged delete that was recreated on disk reports as both `D` and `??`, so
+/// the path lands in the diff and the untracked scan at once. The hunk ranges
+/// must survive that overlap, or the whole file gets stripped.
+#[test]
+fn a_path_that_is_both_diffed_and_untracked_keeps_its_hunk_ranges() -> TestResult {
+    let repo = Repo::new("changes-deleted-and-recreated")?;
+    repo.commit_baseline("d.rs", "fn d() {}\n// committed comment, must survive\n")?;
+
+    repo.git(&["rm", "--cached", "-q", "d.rs"])?;
+    repo.write(
+        "d.rs",
+        "fn d() {}\n// committed comment, must survive\nlet x = 1; // agent slop\n",
+    )?;
+
+    let out = repo.silence(&["strip", "--changes"])?;
+
+    assert!(out.status.success());
+    assert_eq!(
+        repo.read("d.rs")?,
+        "fn d() {}\n// committed comment, must survive\nlet x = 1;\n"
+    );
+    Ok(())
+}

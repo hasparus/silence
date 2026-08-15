@@ -40,8 +40,10 @@ struct ToolResponse {
     structured_patch: Option<Vec<Hunk>>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+/// Strict on purpose: a hunk we cannot read means the patch cannot be trusted,
+/// and the whole `tool_response` degrades to the git fallback rather than
+/// producing ranges anchored at the wrong lines.
+#[derive(Debug, Deserialize)]
 struct Hunk {
     #[serde(rename = "newStart")]
     new_start: usize,
@@ -56,6 +58,9 @@ pub struct HookJob {
     pub lines: Option<Lines>,
 }
 
+/// May return more than one job for the same file — the tool input and the tool
+/// response can spell its path differently. Callers must collapse them by
+/// canonical path before stripping, or the file gets stripped twice.
 pub fn jobs_from_stdin(input: &str) -> Result<Vec<HookJob>, String> {
     if input.trim().is_empty() {
         return Ok(Vec::new());

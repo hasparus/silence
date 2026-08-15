@@ -40,10 +40,11 @@ impl GitFallback {
     /// repository, or the diff failed) the whole file is the agent's as far as
     /// we can know.
     fn lines_for(&self, path: &Path) -> Option<Lines> {
-        let Some(root) = self.root.as_deref() else {
-            return Some(Lines::All);
-        };
-        match self.changed.get_or_init(|| Self::scan(root)) {
+        let changed = self
+            .root
+            .as_deref()
+            .and_then(|root| self.changed.get_or_init(|| Self::scan(root)).as_ref());
+        match changed {
             None => Some(Lines::All),
             Some(changed) => changed.get(path).cloned(),
         }
@@ -84,6 +85,9 @@ fn dedupe_by_canonical_path(jobs: &mut Vec<HookJob>) {
     jobs.dedup_by(|a, b| a.path == b.path);
 }
 
+/// Only the git fallback needs a repository, so the containment check applies to
+/// jobs that will use it. A job that already knows which lines the write added
+/// does not care where the file lives.
 fn hook_targets(mut jobs: Vec<HookJob>, root: Option<&Path>) -> Vec<HookJob> {
     dedupe_by_canonical_path(&mut jobs);
     let mut kept = Vec::with_capacity(jobs.len());
@@ -92,7 +96,7 @@ fn hook_targets(mut jobs: Vec<HookJob>, root: Option<&Path>) -> Vec<HookJob> {
             eprintln!("silence: skip {}: not a file", job.path.display());
             continue;
         }
-        if root.is_some_and(|root| !job.path.starts_with(root)) {
+        if job.lines.is_none() && root.is_some_and(|root| !job.path.starts_with(root)) {
             log_skip(HookSkip::OutsideRepo(job.path));
             continue;
         }
