@@ -95,11 +95,13 @@ directive**: i.e. body starting with `@`, shaped `namespace:value`, or an XML-is
 `<tag … />` (so `@ts-ignore`, `//go:embed`, `/// <reference />` survive
 without a rule each). A `#!` shebang on line 1 is never removed.
 
-**Machine markers** survive too: a sentinel ending in `-start`, `-end` or
-`-begin`, optionally followed by up to two identifier-shaped ids, so the paired
-sentinels other tools write between (`{/* impeccable-variants-start cd383158 */}`,
-`// codegen-end`) are not stripped out from under them. Prose is not shaped like
-that, so `// well-known trick here` and `// broken.` still go.
+**Machine markers** survive too, so the paired sentinels other tools write
+between (`{/* impeccable-variants-start cd383158 */}` … `{/* impeccable-variants-end
+cd383158 */}`) are not stripped out from under them. A sentinel counts only when
+its partner is in the same file: `-start`/`-begin` needs its `-end`/`-finish`, and
+vice versa. That is deliberate — `// front-end only` and `// cold-start path` have
+a sentinel's exact shape, and only the missing partner tells them apart from
+`// codegen-start`. A lone half is treated as prose and goes.
 
 `.silence.toml` (searched cwd → git root → `~/.config/.silence.toml`):
 

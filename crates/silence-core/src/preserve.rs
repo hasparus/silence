@@ -7,6 +7,11 @@ pub const DEFAULT_PRESERVE_PATTERNS: &[&str] = &[
     "XXX",
     "SAFETY",
     "no-op",
+    "No-op",
+    "#region",
+    "#endregion",
+    "biome-",
+    "DO NOT EDIT",
     "NOTE:",
     "eslint-",
     "prettier-ignore",
@@ -88,6 +93,11 @@ impl PreserveConfig {
     }
 
     #[must_use]
+    pub fn directives_enabled(&self) -> bool {
+        self.directives
+    }
+
+    #[must_use]
     pub fn with_directives(mut self, enabled: bool) -> Self {
         self.directives = enabled;
         self
@@ -110,9 +120,7 @@ impl PreserveConfig {
             }
         }
         if self.directives
-            && (looks_like_doc_comment(comment_text)
-                || looks_like_directive(comment_text)
-                || looks_like_marker(comment_text))
+            && (looks_like_doc_comment(comment_text) || looks_like_directive(comment_text))
         {
             return true;
         }
@@ -157,33 +165,37 @@ fn looks_like_directive(text: &str) -> bool {
     false
 }
 
-/// Markers another tool reads back — `impeccable-variants-start cd383158`,
-/// `prettier-ignore-start`, `codegen-end`. Deleting one silently breaks the
-/// tool that writes between the pair.
+/// Half of a paired marker — the `foo-start` / `foo-end` sentinels tools write
+/// around a region they own. Returns the stem shared by the two halves, so the
+/// caller can check whether the partner is really there.
 ///
-/// What makes a marker a marker is the pairing: a sentinel ending in `-start`
-/// or `-end` that some tool greps for, optionally followed by an id. Prose does
-/// not have that shape, so this asks for it directly rather than guessing from
-/// how punctuated a comment looks.
-fn looks_like_marker(text: &str) -> bool {
-    const PAIRED: [&str; 3] = ["start", "end", "begin"];
-    const MAX_IDS: usize = 2;
+/// Shape alone cannot tell `codegen-end` from `front-end`; only the partner
+/// can, which is why this reports the stem instead of a verdict.
+#[must_use]
+pub fn marker_half(text: &str) -> Option<(String, MarkerHalf)> {
+    const HALVES: [(&str, MarkerHalf); 4] = [
+        ("start", MarkerHalf::Open),
+        ("begin", MarkerHalf::Open),
+        ("end", MarkerHalf::Close),
+        ("finish", MarkerHalf::Close),
+    ];
 
-    let mut tokens = comment_body(text).split_whitespace();
-    let Some(sentinel) = tokens.next() else {
-        return false;
-    };
-
-    let lowered = sentinel.to_ascii_lowercase();
-    let paired = PAIRED.iter().any(|suffix| {
-        lowered
-            .strip_suffix(suffix)
-            .is_some_and(|prefix| prefix.len() > 1 && prefix.ends_with(['-', '_', ':']))
-    });
-
-    paired && identifier(sentinel) && tokens.by_ref().take(MAX_IDS).all(identifier) && {
-        tokens.next().is_none()
+    let sentinel = comment_body(text).split_whitespace().next()?;
+    if !identifier(sentinel) {
+        return None;
     }
+    let lowered = sentinel.to_ascii_lowercase();
+    HALVES.iter().find_map(|(suffix, half)| {
+        let stem = lowered.strip_suffix(suffix)?;
+        let stem = stem.strip_suffix(['-', '_'])?;
+        (!stem.is_empty()).then(|| (stem.to_string(), *half))
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerHalf {
+    Open,
+    Close,
 }
 
 fn identifier(token: &str) -> bool {
@@ -198,12 +210,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paired_machine_markers_are_preserved_by_default() {
-        let c = PreserveConfig::default();
-        assert!(c.should_preserve("/* impeccable-variants-start cd383158 */"));
-        assert!(c.should_preserve("/* impeccable-variants-end cd383158 */"));
-        assert!(c.should_preserve("<!-- region-start build-info -->"));
-        assert!(c.should_preserve("// codegen-end"));
+    fn both_halves_of_a_marker_share_a_stem() {
+        let open = marker_half("/* impeccable-variants-start cd383158 */");
+        let close = marker_half("/* impeccable-variants-end cd383158 */");
+        assert_eq!(
+            open,
+            Some(("impeccable-variants".to_string(), MarkerHalf::Open))
+        );
+        assert_eq!(
+            close,
+            Some(("impeccable-variants".to_string(), MarkerHalf::Close))
+        );
+        assert_eq!(
+            marker_half("<!-- region-start build-info -->"),
+            Some(("region".to_string(), MarkerHalf::Open))
+        );
+    }
+
+    /// An id that is all digits is still an id.
+    #[test]
+    fn a_digit_only_id_does_not_disqualify_a_half() {
+        assert_eq!(
+            marker_half("/* impeccable-variants-start 12345678 */"),
+            Some(("impeccable-variants".to_string(), MarkerHalf::Open))
+        );
+    }
+
+    /// English compounds ending in -end or -start have this exact shape, which
+    /// is why shape alone never decides; the partner does.
+    #[test]
+    fn hyphenated_compounds_look_like_halves_too() {
+        for prose in ["// front-end only", "// cold-start path", "// dead-end"] {
+            assert!(marker_half(prose).is_some(), "{prose}");
+        }
     }
 
     /// An empty body does not say why it is empty.
@@ -212,13 +251,6 @@ mod tests {
         let c = PreserveConfig::default();
         assert!(c.should_preserve("// no-op"));
         assert!(c.should_preserve("// no-op, the caller already flushed"));
-    }
-
-    #[test]
-    fn an_id_that_is_all_digits_still_marks() {
-        let c = PreserveConfig::default();
-        assert!(c.should_preserve("/* impeccable-variants-start 12345678 */"));
-        assert!(c.should_preserve("/* impeccable-variants-end 8675309 */"));
     }
 
     #[test]
