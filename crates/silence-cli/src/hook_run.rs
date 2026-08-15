@@ -32,8 +32,7 @@ impl GitFallback {
         }
     }
 
-    /// One answer per path, including which skip applies when there is none —
-    /// so no caller can ask the questions in the wrong order.
+    /// One answer per path, including which skip applies when there is none.
     ///
     /// When git cannot tell us anything at all (no repository, or the diff
     /// failed) the whole file is the agent's as far as we can know. Only a file
@@ -97,32 +96,36 @@ fn dedupe_by_canonical_path(jobs: &mut Vec<HookJob>) {
 /// Settles every question about a job in one place: which file it really names,
 /// whether we can strip it at all, and which of its lines are in scope. Asking
 /// git happens here too, so "does this job need a repository" is decided once,
-/// where the answer is used, rather than predicted by an earlier pass.
+/// where the answer is used, rather than predicted by an earlier pass. Every
+/// reason to skip comes back as a value rather than a branch out of the loop.
 fn resolve(mut jobs: Vec<HookJob>, fallback: &GitFallback) -> Vec<(PathBuf, Lines)> {
     dedupe_by_canonical_path(&mut jobs);
-    let mut resolved = Vec::with_capacity(jobs.len());
-    for HookJob { path, lines } in jobs {
-        if !path.is_file() {
-            log_skip(HookSkip::NotAFile(path));
-            continue;
-        }
-        if lang_for(&path).is_none() {
-            log_skip(HookSkip::UnsupportedLang(path));
-            continue;
-        }
-        let lines = match lines {
-            Some(lines) => lines,
-            None => match fallback.lines_for(&path) {
-                Ok(lines) => lines,
-                Err(skip) => {
-                    log_skip(skip);
-                    continue;
-                }
-            },
-        };
-        resolved.push((path, lines));
+    jobs.into_iter()
+        .filter_map(|job| match resolve_job(job, fallback) {
+            Ok(resolved) => Some(resolved),
+            Err(skip) => {
+                log_skip(skip);
+                None
+            }
+        })
+        .collect()
+}
+
+fn resolve_job(
+    HookJob { path, lines }: HookJob,
+    fallback: &GitFallback,
+) -> Result<(PathBuf, Lines), HookSkip> {
+    if !path.is_file() {
+        return Err(HookSkip::NotAFile(path));
     }
-    resolved
+    if lang_for(&path).is_none() {
+        return Err(HookSkip::UnsupportedLang(path));
+    }
+    let lines = match lines {
+        Some(lines) => lines,
+        None => fallback.lines_for(&path)?,
+    };
+    Ok((path, lines))
 }
 
 pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
