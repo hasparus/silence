@@ -81,8 +81,10 @@ pub fn changes(scope: Scope) -> Result<GitChanges> {
 }
 
 /// A path can be both diffed and untracked — a staged delete that was recreated
-/// on disk reports as `D` and `??` at once. Its hunk ranges are narrower than
-/// `All` and describe the same file, so they win.
+/// on disk reports as `D` and `??` at once. Under `Scope::All` it then has real
+/// hunk ranges, which are narrower than `All` and describe the same file, so
+/// they win. Under `Scope::Unstaged` the index has no such file, so the whole
+/// thing genuinely is an addition and `All` is right.
 fn merge(
     hunks: HashMap<PathBuf, Vec<(usize, usize)>>,
     untracked: HashSet<PathBuf>,

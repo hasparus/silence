@@ -10,6 +10,7 @@ use crate::hook_input::{self, HookJob};
 use crate::strip::{lang_for, strip_file, StripOpts, StripOutcome, WriteMode};
 
 enum HookSkip {
+    NotAFile(PathBuf),
     NotInGitChanges(PathBuf),
     UnsupportedLang(PathBuf),
     StripFailed(PathBuf, String),
@@ -77,12 +78,15 @@ fn dedupe_by_canonical_path(jobs: &mut Vec<HookJob>) {
             job.path = canon;
         }
     }
-    jobs.sort_by(|a, b| {
-        a.path
-            .cmp(&b.path)
-            .then_with(|| a.lines.is_none().cmp(&b.lines.is_none()))
+    jobs.sort_by(|a, b| a.path.cmp(&b.path));
+    jobs.dedup_by(|dropped, kept| {
+        dropped.path == kept.path && {
+            if kept.lines.is_none() {
+                kept.lines = dropped.lines.take();
+            }
+            true
+        }
     });
-    jobs.dedup_by(|a, b| a.path == b.path);
 }
 
 /// Only the git fallback needs a repository, so the containment check applies to
@@ -93,7 +97,7 @@ fn hook_targets(mut jobs: Vec<HookJob>, root: Option<&Path>) -> Vec<HookJob> {
     let mut kept = Vec::with_capacity(jobs.len());
     for job in jobs {
         if !job.path.is_file() {
-            eprintln!("silence: skip {}: not a file", job.path.display());
+            log_skip(HookSkip::NotAFile(job.path));
             continue;
         }
         if job.lines.is_none() && root.is_some_and(|root| !job.path.starts_with(root)) {
@@ -127,10 +131,10 @@ pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
         return;
     }
 
-    let opts = StripOpts {
+    let opts = |lines| StripOpts {
         line_mode: LineMode::Collapse,
         preserve: preserve.clone(),
-        lines: Lines::All,
+        lines,
         kinds: CommentKinds::default(),
         write: WriteMode::Hook,
     };
@@ -141,11 +145,7 @@ pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
             log_skip(HookSkip::NotInGitChanges(path));
             continue;
         };
-        let file_opts = StripOpts {
-            lines,
-            ..opts.clone()
-        };
-        match strip_file(&path, &file_opts) {
+        match strip_file(&path, &opts(lines)) {
             StripOutcome::Hook { removed } => stripped.push((path, removed)),
             StripOutcome::Unchanged | StripOutcome::Checked { .. } | StripOutcome::Wrote { .. } => {
             }
@@ -191,6 +191,9 @@ fn context_payload(total: usize) -> serde_json::Value {
 
 fn log_skip(skip: HookSkip) {
     match skip {
+        HookSkip::NotAFile(path) => {
+            eprintln!("silence: skip {}: not a file", path.display());
+        }
         HookSkip::NotInGitChanges(path) => {
             eprintln!(
                 "silence: skip {}: not in uncommitted changes",

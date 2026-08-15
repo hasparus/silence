@@ -76,24 +76,22 @@ impl HookStdin {
             args.push_paths(&mut paths);
         }
 
+        let mut jobs: Vec<HookJob> = paths
+            .into_iter()
+            .map(|path| HookJob { path, lines: None })
+            .collect();
+
         let patched = self
             .tool_response
             .and_then(|raw| serde_json::from_value::<ToolResponse>(raw).ok())
             .and_then(ToolResponse::into_patched);
-        if let Some((path, _)) = &patched {
-            paths.push(path.clone());
+        if let Some((path, lines)) = patched {
+            jobs.push(HookJob {
+                path,
+                lines: Some(lines),
+            });
         }
-
-        paths
-            .into_iter()
-            .map(|path| {
-                let lines = match &patched {
-                    Some((target, lines)) if *target == path => Some(lines.clone()),
-                    _ => None,
-                };
-                HookJob { path, lines }
-            })
-            .collect()
+        jobs
     }
 }
 
@@ -122,12 +120,12 @@ fn added_ranges(hunks: &[Hunk]) -> Vec<(usize, usize)> {
                 Some('-' | '\\') => {}
                 Some('+') => {
                     match out.last_mut() {
-                        Some(last) if last.1 + 1 == line => last.1 = line,
+                        Some(last) if last.1.saturating_add(1) == line => last.1 = line,
                         _ => out.push((line, line)),
                     }
-                    line += 1;
+                    line = line.saturating_add(1);
                 }
-                _ => line += 1,
+                _ => line = line.saturating_add(1),
             }
         }
     }
@@ -172,6 +170,12 @@ mod tests {
     use std::path::Path;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// The patched job is appended, not merged — `hook_run` collapses the
+    /// duplicates by canonical path.
+    fn lines_from_stdin(input: &str) -> Result<Option<Lines>, String> {
+        Ok(jobs_from_stdin(input)?.into_iter().find_map(|j| j.lines))
+    }
 
     fn paths_from_stdin(input: &str) -> Result<Vec<PathBuf>, String> {
         Ok(jobs_from_stdin(input)?
@@ -226,13 +230,13 @@ mod tests {
 
     #[test]
     fn edit_patch_yields_added_lines_only() -> TestResult {
-        let jobs = jobs_from_stdin(
+        let lines = lines_from_stdin(
             r#"{"tool_input":{"file_path":"/tmp/a.py"},
                 "tool_response":{"filePath":"/tmp/a.py","structuredPatch":[
                   {"newStart":10,"newLines":4,"lines":[
                     " def a():","-    return 1","+    # new","+    return 2"]}]}}"#,
         )?;
-        assert_eq!(jobs[0].lines, Some(Lines::Ranges(vec![(11, 12)])));
+        assert_eq!(lines, Some(Lines::Ranges(vec![(11, 12)])));
         Ok(())
     }
 
@@ -254,6 +258,19 @@ mod tests {
                    "-old","\\ No newline at end of file","+agent"," human"]}]}}"#,
         )?;
         assert_eq!(jobs[0].lines, Some(Lines::Ranges(vec![(1, 1)])));
+        Ok(())
+    }
+
+    #[test]
+    fn a_degenerate_new_start_does_not_overflow() -> TestResult {
+        let jobs = jobs_from_stdin(
+            r#"{"tool_response":{"filePath":"a.rs","structuredPatch":[
+                 {"newStart":18446744073709551615,"lines":["+x","+y"]}]}}"#,
+        )?;
+        assert_eq!(
+            jobs[0].lines,
+            Some(Lines::Ranges(vec![(usize::MAX, usize::MAX)]))
+        );
         Ok(())
     }
 
