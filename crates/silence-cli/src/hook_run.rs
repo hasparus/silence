@@ -35,7 +35,9 @@ fn git_ranges(root: &Path) -> HashMap<PathBuf, LineRanges> {
     ranges
 }
 
-fn hook_targets(jobs: Vec<HookJob>, root: Option<&Path>) -> Vec<HookJob> {
+fn hook_targets(mut jobs: Vec<HookJob>, root: Option<&Path>) -> Vec<HookJob> {
+    jobs.sort_by(|a, b| a.path.cmp(&b.path));
+    jobs.dedup_by(|a, b| a.path == b.path);
     let mut kept = Vec::with_capacity(jobs.len());
     for job in jobs {
         let path = &job.path;
