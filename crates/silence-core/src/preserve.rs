@@ -153,6 +153,8 @@ impl PreserveConfig {
         &self.invalid
     }
 
+    /// The per-comment half of the rule. Machine markers also need the rest of
+    /// the file to decide, so [`crate::strip`] is the complete entry point.
     #[must_use]
     pub fn should_preserve(&self, comment_text: &str) -> bool {
         let trimmed = comment_text.trim();
@@ -174,7 +176,8 @@ impl PreserveConfig {
 }
 
 /// One file's preservation verdict, so the per-comment answer and the
-/// whole-file pairing rule are asked in one place.
+/// whole-file pairing rule are asked in one place. Comments are identified by
+/// start byte, so pass back the same ones [`PreserveConfig::for_file`] saw.
 pub(crate) struct FilePreserve<'a> {
     config: &'a PreserveConfig,
     markers: HashSet<usize>,
