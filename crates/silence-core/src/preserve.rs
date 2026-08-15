@@ -6,6 +6,7 @@ pub const DEFAULT_PRESERVE_PATTERNS: &[&str] = &[
     "HACK",
     "XXX",
     "SAFETY",
+    "no-op",
     "NOTE:",
     "eslint-",
     "prettier-ignore",
@@ -205,6 +206,14 @@ mod tests {
         assert!(c.should_preserve("// codegen-end"));
     }
 
+    /// An empty body does not say why it is empty.
+    #[test]
+    fn no_op_survives() {
+        let c = PreserveConfig::default();
+        assert!(c.should_preserve("// no-op"));
+        assert!(c.should_preserve("// no-op, the caller already flushed"));
+    }
+
     #[test]
     fn an_id_that_is_all_digits_still_marks() {
         let c = PreserveConfig::default();
@@ -229,7 +238,6 @@ mod tests {
             "// broken.",
             "// unused.",
             "// legacy.",
-            "// no-op.",
             "// wait...",
             "/* fine. */",
             "<!-- old. -->",
