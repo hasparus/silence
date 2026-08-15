@@ -32,26 +32,25 @@ impl GitFallback {
         }
     }
 
-    /// Whether this path is one the fallback can speak about at all. Outside a
-    /// repository every file is, since there is nothing to be outside of.
-    fn covers(&self, path: &Path) -> bool {
-        self.root
-            .as_deref()
-            .is_none_or(|root| path.starts_with(root))
-    }
-
-    /// `None` only when git positively reports the file as unchanged — there is
-    /// no basis to strip it. When git cannot tell us anything at all (no
-    /// repository, or the diff failed) the whole file is the agent's as far as
-    /// we can know.
-    fn lines_for(&self, path: &Path) -> Option<Lines> {
-        let changed = self
-            .root
-            .as_deref()
-            .and_then(|root| self.changed.get_or_init(|| Self::scan(root)).as_ref());
-        match changed {
-            None => Some(Lines::All),
-            Some(changed) => changed.get(path).cloned(),
+    /// One answer per path, including which skip applies when there is none —
+    /// so no caller can ask the questions in the wrong order.
+    ///
+    /// When git cannot tell us anything at all (no repository, or the diff
+    /// failed) the whole file is the agent's as far as we can know. Only a file
+    /// git positively reports as unchanged gives no basis to strip.
+    fn lines_for(&self, path: &Path) -> Result<Lines, HookSkip> {
+        let Some(root) = self.root.as_deref() else {
+            return Ok(Lines::All);
+        };
+        if !path.starts_with(root) {
+            return Err(HookSkip::OutsideRepo(path.to_path_buf()));
+        }
+        match self.changed.get_or_init(|| Self::scan(root)) {
+            None => Ok(Lines::All),
+            Some(changed) => changed
+                .get(path)
+                .cloned()
+                .ok_or_else(|| HookSkip::NotInGitChanges(path.to_path_buf())),
         }
     }
 
@@ -113,17 +112,13 @@ fn resolve(mut jobs: Vec<HookJob>, fallback: &GitFallback) -> Vec<(PathBuf, Line
         }
         let lines = match lines {
             Some(lines) => lines,
-            None if fallback.covers(&path) => {
-                let Some(lines) = fallback.lines_for(&path) else {
-                    log_skip(HookSkip::NotInGitChanges(path));
+            None => match fallback.lines_for(&path) {
+                Ok(lines) => lines,
+                Err(skip) => {
+                    log_skip(skip);
                     continue;
-                };
-                lines
-            }
-            None => {
-                log_skip(HookSkip::OutsideRepo(path));
-                continue;
-            }
+                }
+            },
         };
         resolved.push((path, lines));
     }

@@ -285,6 +285,44 @@ fn hook_collapses_relative_and_absolute_spellings_of_one_file() -> TestResult {
     Ok(())
 }
 
+/// A patch says exactly which lines the agent wrote, so it needs no repository.
+/// Without one there is nothing to scope by, and a file outside the root is not
+/// ours to touch.
+#[test]
+fn a_file_outside_the_repo_needs_a_patch_to_be_stripped() -> TestResult {
+    let repo = tmp("hook-outside-repo")?;
+    git(&repo, &["init", "-q"])?;
+    let outside = tmp("hook-outside-target")?;
+    let path = outside.join("a.rs");
+
+    std::fs::write(&path, "fn a() {} // agent slop\n")?;
+    let bare = serde_json::json!({
+        "tool_input": { "file_path": path.canonicalize()?.to_string_lossy() },
+    })
+    .to_string();
+    assert!(run_hook_stdin(&repo, &bare)?.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&path)?,
+        "fn a() {} // agent slop\n",
+        "no patch and outside the repo: nothing to scope by"
+    );
+
+    let patched = serde_json::json!({
+        "tool_response": {
+            "filePath": path.canonicalize()?.to_string_lossy(),
+            "structuredPatch": [{
+                "newStart": 1,
+                "newLines": 1,
+                "lines": ["+fn a() {} // agent slop"],
+            }],
+        },
+    })
+    .to_string();
+    assert!(run_hook_stdin(&repo, &patched)?.status.success());
+    assert_eq!(std::fs::read_to_string(&path)?, "fn a() {}\n");
+    Ok(())
+}
+
 /// `tool_response` is a tool's own output and varies by harness. An unreadable
 /// one must not take the rest of the event down with it.
 #[test]
