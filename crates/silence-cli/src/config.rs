@@ -88,7 +88,7 @@ impl LoadedConfig {
             for p in DEFAULT_PRESERVE_PATTERNS {
                 println!("  {p}");
             }
-            println!("directive detection: active (@tag, namespace:value, <xml/>)");
+            println!("directive detection: active (@tag, namespace:value, <xml/>, paired foo-start/foo-end markers)");
         }
     }
 }
