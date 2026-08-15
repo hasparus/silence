@@ -1,10 +1,8 @@
-use std::collections::{HashMap, HashSet};
-
 use silence_langs::Lang;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
 mod preserve;
-pub use preserve::{MarkerHalf, PreserveConfig, DEFAULT_PRESERVE_PATTERNS};
+pub use preserve::{PreserveConfig, DEFAULT_PRESERVE_PATTERNS};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -202,42 +200,11 @@ fn in_ranges(comment: &Comment, ranges: &[(usize, usize)]) -> bool {
         .any(|&(s, e)| comment.start_row <= e && comment.end_row >= s)
 }
 
-/// Comments that are one half of a marker pair, by start byte.
-///
-/// A lone `foo-start` is not a marker — it is a tool's fence only when the
-/// matching `foo-end` is in the file too. That is what separates
-/// `codegen-start` from ordinary hyphenated prose like `// front-end only`,
-/// and it cannot be seen from one comment at a time.
-fn paired_markers(comments: &[Comment], opts: &Options) -> HashSet<usize> {
-    if !opts.preserve.directives_enabled() {
-        return HashSet::new();
-    }
-    let halves: Vec<(usize, String, MarkerHalf)> = comments
-        .iter()
-        .filter_map(|c| {
-            preserve::marker_half(&c.text).map(|(stem, half)| (c.start_byte, stem, half))
-        })
-        .collect();
-    let mut seen: HashMap<&str, (bool, bool)> = HashMap::new();
-    for (_, stem, half) in &halves {
-        let entry = seen.entry(stem.as_str()).or_default();
-        match half {
-            MarkerHalf::Open => entry.0 = true,
-            MarkerHalf::Close => entry.1 = true,
-        }
-    }
-    halves
-        .iter()
-        .filter(|(_, stem, _)| seen.get(stem.as_str()).is_some_and(|&(o, c)| o && c))
-        .map(|(start, _, _)| *start)
-        .collect()
-}
-
 /// # Errors
 /// Returns an error if comment extraction fails (grammar load or parse error).
 pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error> {
     let comments = find_comments(source, lang)?;
-    let markers = paired_markers(&comments, opts);
+    let preserve = opts.preserve.for_file(&comments);
 
     let mut to_remove: Vec<&Comment> = Vec::new();
     let mut preserved = 0usize;
@@ -248,7 +215,7 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
         if !opts.kinds.allows(c.kind) {
             continue;
         }
-        if opts.preserve.should_preserve(&c.text) || markers.contains(&c.start_byte) {
+        if preserve.should_preserve(c) {
             preserved += 1;
             continue;
         }
@@ -387,6 +354,28 @@ mod tests {
 
         let lone = strip_default("let a = 1; // codegen-end\n", Lang::Rust)?;
         assert_eq!(lone, "let a = 1;\n");
+        Ok(())
+    }
+
+    /// C and Java put a banner fence on its own line behind a `*` gutter, so
+    /// the sentinel is not the first token of the comment.
+    #[test]
+    fn a_gutter_does_not_hide_the_sentinel() -> TestResult {
+        let src =
+            "/*\n * codegen-start abc\n */\nlet x = 1; // slop\n/*\n * codegen-end abc\n */\n";
+        let out = strip_default(src, Lang::Rust)?;
+        assert!(out.contains("codegen-start abc"), "{out}");
+        assert!(out.contains("codegen-end abc"), "{out}");
+        assert!(!out.contains("slop"), "{out}");
+        Ok(())
+    }
+
+    /// A pair fences the region between its halves. Halves in the wrong order
+    /// fence nothing, so they are a coincidence of wording, not a marker.
+    #[test]
+    fn a_close_before_its_open_is_not_a_pair() -> TestResult {
+        let src = "let a = 1; // zeta-end came first\nlet b = 2; // zeta-start came second\n";
+        assert_eq!(strip_default(src, Lang::Rust)?, "let a = 1;\nlet b = 2;\n");
         Ok(())
     }
 
