@@ -204,6 +204,7 @@ fn in_ranges(comment: &Comment, ranges: &[(usize, usize)]) -> bool {
 /// Returns an error if comment extraction fails (grammar load or parse error).
 pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error> {
     let comments = find_comments(source, lang)?;
+    let preserve = opts.preserve.for_file(&comments);
 
     let mut to_remove: Vec<&Comment> = Vec::new();
     let mut preserved = 0usize;
@@ -214,7 +215,7 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
         if !opts.kinds.allows(c.kind) {
             continue;
         }
-        if opts.preserve.should_preserve(&c.text) {
+        if preserve.should_preserve(c) {
             preserved += 1;
             continue;
         }
@@ -339,6 +340,77 @@ mod tests {
 
     fn strip_default(src: &str, lang: Lang) -> Result<String, Error> {
         Ok(strip(src, lang, &Options::default())?.output)
+    }
+
+    /// The pair is what protects the pair. A sentinel with no partner in the
+    /// file is indistinguishable from prose, so it is treated as prose.
+    #[test]
+    fn only_a_sentinel_with_its_partner_survives() -> TestResult {
+        let src = "let a = 1; // codegen-start\nlet b = 2; // slop\nlet c = 3; // codegen-end\n";
+        let out = strip_default(src, Lang::Rust)?;
+        assert!(out.contains("codegen-start"), "{out}");
+        assert!(out.contains("codegen-end"), "{out}");
+        assert!(!out.contains("slop"), "{out}");
+
+        let lone = strip_default("let a = 1; // codegen-end\n", Lang::Rust)?;
+        assert_eq!(lone, "let a = 1;\n");
+        Ok(())
+    }
+
+    /// C and Java put a banner fence on its own line behind a `*` gutter, so
+    /// the sentinel is not the first token of the comment.
+    #[test]
+    fn a_gutter_does_not_hide_the_sentinel() -> TestResult {
+        let src =
+            "/*\n * codegen-start abc\n */\nlet x = 1; // slop\n/*\n * codegen-end abc\n */\n";
+        let out = strip_default(src, Lang::Rust)?;
+        assert!(out.contains("codegen-start abc"), "{out}");
+        assert!(out.contains("codegen-end abc"), "{out}");
+        assert!(!out.contains("slop"), "{out}");
+        Ok(())
+    }
+
+    /// A pair fences the region between its halves. Halves in the wrong order
+    /// fence nothing, so they are a coincidence of wording, not a marker.
+    #[test]
+    fn a_close_before_its_open_is_not_a_pair() -> TestResult {
+        let src = "let a = 1; // zeta-end came first\nlet b = 2; // zeta-start came second\n";
+        assert_eq!(strip_default(src, Lang::Rust)?, "let a = 1;\nlet b = 2;\n");
+        Ok(())
+    }
+
+    /// front-end, cold-start and friends have a sentinel's exact shape. Nothing
+    /// but the missing partner separates them from a real marker.
+    #[test]
+    fn hyphenated_compounds_are_still_prose() -> TestResult {
+        let src = "let a = 1; // front-end only\nlet b = 2; // cold-start path\nlet c = 3; // dead-end\nlet d = 4; // Back-End\n";
+        let out = strip_default(src, Lang::Rust)?;
+        assert_eq!(out, "let a = 1;\nlet b = 2;\nlet c = 3;\nlet d = 4;\n");
+        Ok(())
+    }
+
+    #[test]
+    fn markers_go_away_with_directive_detection_off() -> TestResult {
+        let src = "let a = 1; // codegen-start\nlet b = 2; // codegen-end\n";
+        let opts = Options {
+            preserve: PreserveConfig::empty(),
+            ..Default::default()
+        };
+        assert_eq!(
+            strip(src, Lang::Rust, &opts)?.output,
+            "let a = 1;\nlet b = 2;\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn jsx_machine_markers_survive_while_prose_goes() -> TestResult {
+        let src = "<div>\n      {/* impeccable-variants-start cd383158 */}\n      {/* the card */}\n      <Card />\n      {/* impeccable-variants-end cd383158 */}\n    </div>\n";
+        let out = strip_default(src, Lang::Tsx)?;
+        assert!(out.contains("impeccable-variants-start cd383158"));
+        assert!(out.contains("impeccable-variants-end cd383158"));
+        assert!(!out.contains("the card"));
+        Ok(())
     }
 
     #[test]
