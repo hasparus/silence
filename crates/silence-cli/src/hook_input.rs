@@ -159,6 +159,7 @@ fn paths_from_patch(patch: &str, out: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -273,7 +274,7 @@ mod tests {
         )?;
         let b = jobs
             .iter()
-            .find(|j| j.path == PathBuf::from("b.rs"))
+            .find(|j| j.path == Path::new("b.rs"))
             .ok_or("b.rs missing from jobs")?;
         assert_eq!(b.lines, None);
         Ok(())
