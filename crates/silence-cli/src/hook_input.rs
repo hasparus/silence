@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
+use silence_core::Lines;
+
 use crate::strip::LineRanges;
 
 #[derive(Debug, Deserialize, Default)]
@@ -24,7 +26,7 @@ struct HookArgs {
 
 /// Claude Code reports what a `Write`/`Edit` actually changed in the tool result:
 /// `structuredPatch` carries the hunks, `type` distinguishes a new file from a
-/// rewrite. Other harnesses send neither, so the scope stays `Unknown` and the
+/// rewrite. Other harnesses send neither, so the job carries no lines and the
 /// caller falls back to git.
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
@@ -44,21 +46,12 @@ struct Hunk {
     lines: Vec<String>,
 }
 
-/// Which lines of a file the agent's write is responsible for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PatchScope {
-    /// No patch in the payload; fall back to git ranges.
-    Unknown,
-    /// New file: every line is the agent's.
-    WholeFile,
-    /// Lines the write added. Empty means the write changed nothing.
-    Added(LineRanges),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookJob {
     pub path: PathBuf,
-    pub scope: PatchScope,
+    /// What the harness said the write touched. `None` means it said nothing,
+    /// so the caller falls back to git.
+    pub lines: Option<Lines>,
 }
 
 pub fn jobs_from_stdin(input: &str) -> Result<Vec<HookJob>, String> {
@@ -76,35 +69,33 @@ impl HookStdin {
             args.push_paths(&mut paths);
         }
 
-        let scope = self.tool_response.as_ref().map(ToolResponse::scope);
-        let scoped = self
-            .tool_response
-            .and_then(|r| r.file_path)
-            .map(PathBuf::from);
-        if let Some(path) = scoped.clone() {
-            paths.push(path);
+        let patched = self.tool_response.and_then(ToolResponse::into_patched);
+        if let Some((path, _)) = &patched {
+            paths.push(path.clone());
         }
 
         paths
             .into_iter()
             .map(|path| {
-                let scope = match (&scoped, &scope) {
-                    (Some(target), Some(scope)) if *target == path => scope.clone(),
-                    _ => PatchScope::Unknown,
+                let lines = match &patched {
+                    Some((target, lines)) if *target == path => Some(lines.clone()),
+                    _ => None,
                 };
-                HookJob { path, scope }
+                HookJob { path, lines }
             })
             .collect()
     }
 }
 
 impl ToolResponse {
-    fn scope(&self) -> PatchScope {
-        match self.structured_patch.as_deref() {
-            None => PatchScope::Unknown,
-            Some(_) if self.kind.as_deref() == Some("create") => PatchScope::WholeFile,
-            Some(hunks) => PatchScope::Added(added_ranges(hunks)),
-        }
+    fn into_patched(self) -> Option<(PathBuf, Lines)> {
+        let hunks = self.structured_patch?;
+        let lines = if self.kind.as_deref() == Some("create") {
+            Lines::All
+        } else {
+            Lines::Ranges(added_ranges(&hunks))
+        };
+        Some((PathBuf::from(self.file_path?), lines))
     }
 }
 
@@ -218,7 +209,7 @@ mod tests {
     #[test]
     fn no_tool_response_is_unknown() -> TestResult {
         let jobs = jobs_from_stdin(r#"{"tool_input":{"file_path":"/tmp/a.rs"}}"#)?;
-        assert_eq!(jobs[0].scope, PatchScope::Unknown);
+        assert_eq!(jobs[0].lines, None);
         Ok(())
     }
 
@@ -230,7 +221,7 @@ mod tests {
                   {"newStart":10,"newLines":4,"lines":[
                     " def a():","-    return 1","+    # new","+    return 2"]}]}}"#,
         )?;
-        assert_eq!(jobs[0].scope, PatchScope::Added(vec![(11, 12)]));
+        assert_eq!(jobs[0].lines, Some(Lines::Ranges(vec![(11, 12)])));
         Ok(())
     }
 
@@ -240,7 +231,7 @@ mod tests {
             r#"{"tool_response":{"filePath":"a.rs","structuredPatch":[
                  {"newStart":1,"newLines":2,"lines":["-a","-b","+c"," d","+e"]}]}}"#,
         )?;
-        assert_eq!(jobs[0].scope, PatchScope::Added(vec![(1, 1), (3, 3)]));
+        assert_eq!(jobs[0].lines, Some(Lines::Ranges(vec![(1, 1), (3, 3)])));
         Ok(())
     }
 
@@ -251,7 +242,7 @@ mod tests {
                  {"newStart":1,"newLines":2,"lines":[
                    "-old","\\ No newline at end of file","+agent"," human"]}]}}"#,
         )?;
-        assert_eq!(jobs[0].scope, PatchScope::Added(vec![(1, 1)]));
+        assert_eq!(jobs[0].lines, Some(Lines::Ranges(vec![(1, 1)])));
         Ok(())
     }
 
@@ -260,7 +251,7 @@ mod tests {
         let jobs = jobs_from_stdin(
             r#"{"tool_response":{"type":"create","filePath":"/tmp/n.rs","structuredPatch":[]}}"#,
         )?;
-        assert_eq!(jobs[0].scope, PatchScope::WholeFile);
+        assert_eq!(jobs[0].lines, Some(Lines::All));
         Ok(())
     }
 
@@ -269,7 +260,7 @@ mod tests {
         let jobs = jobs_from_stdin(
             r#"{"tool_response":{"type":"update","filePath":"/tmp/n.rs","structuredPatch":[]}}"#,
         )?;
-        assert_eq!(jobs[0].scope, PatchScope::Added(Vec::new()));
+        assert_eq!(jobs[0].lines, Some(Lines::Ranges(Vec::new())));
         Ok(())
     }
 
@@ -284,7 +275,7 @@ mod tests {
             .iter()
             .find(|j| j.path == PathBuf::from("b.rs"))
             .ok_or("b.rs missing from jobs")?;
-        assert_eq!(b.scope, PatchScope::Unknown);
+        assert_eq!(b.lines, None);
         Ok(())
     }
 }

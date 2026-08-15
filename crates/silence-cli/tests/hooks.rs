@@ -300,9 +300,8 @@ fn hook_collapses_relative_and_absolute_spellings_of_one_file() -> TestResult {
     Ok(())
 }
 
-/// An empty patch on an update means the write changed nothing. The empty
-/// `LineRanges` that reaches the core means the opposite — whole file — so this
-/// case has to be dropped before it gets there.
+/// An empty patch on an update means the write changed nothing, which must not
+/// be confused with having no line information at all.
 #[test]
 fn hook_strips_nothing_when_the_write_changed_nothing() -> TestResult {
     let repo = tmp("hook-empty-patch")?;

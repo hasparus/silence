@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use git2::{Diff, DiffOptions, Repository};
+use silence_core::Lines;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -12,7 +13,7 @@ pub enum Scope {
 
 pub struct GitChanges {
     pub root: PathBuf,
-    pub files: HashMap<PathBuf, Vec<(usize, usize)>>,
+    pub files: HashMap<PathBuf, Lines>,
 }
 
 fn open() -> Result<(Repository, PathBuf)> {
@@ -31,7 +32,8 @@ pub fn root() -> Result<PathBuf> {
 pub fn changes(scope: Scope) -> Result<GitChanges> {
     let (repo, root) = open()?;
 
-    let mut files: HashMap<PathBuf, Vec<(usize, usize)>> = HashMap::new();
+    let mut hunks: HashMap<PathBuf, Vec<(usize, usize)>> = HashMap::new();
+    let mut untracked: HashSet<PathBuf> = HashSet::new();
 
     match scope {
         Scope::Staged => {
@@ -43,8 +45,8 @@ pub fn changes(scope: Scope) -> Result<GitChanges> {
                 .diff_index_to_workdir(None, Some(&mut diff_opts()))
                 .context("failed to diff unstaged changes")?;
             let dirty = diff_paths(&unstaged);
-            collect_hunks(&staged, &mut files)?;
-            files.retain(|path, _| {
+            collect_hunks(&staged, &mut hunks)?;
+            hunks.retain(|path, _| {
                 let keep = !dirty.contains(path);
                 if !keep {
                     eprintln!(
@@ -59,17 +61,25 @@ pub fn changes(scope: Scope) -> Result<GitChanges> {
             let diff = repo
                 .diff_index_to_workdir(None, Some(&mut diff_opts()))
                 .context("failed to diff unstaged changes")?;
-            collect_hunks(&diff, &mut files)?;
-            collect_untracked(&repo, &mut files)?;
+            collect_hunks(&diff, &mut hunks)?;
+            collect_untracked(&repo, &mut untracked)?;
         }
         Scope::All => {
             let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
             let all = repo
                 .diff_tree_to_workdir(head_tree.as_ref(), Some(&mut diff_opts()))
                 .context("failed to diff uncommitted changes")?;
-            collect_hunks(&all, &mut files)?;
-            collect_untracked(&repo, &mut files)?;
+            collect_hunks(&all, &mut hunks)?;
+            collect_untracked(&repo, &mut untracked)?;
         }
+    }
+
+    let mut files: HashMap<PathBuf, Lines> = hunks
+        .into_iter()
+        .map(|(path, ranges)| (path, Lines::Ranges(ranges)))
+        .collect();
+    for path in untracked {
+        files.insert(path, Lines::All);
     }
 
     Ok(GitChanges { root, files })
@@ -129,17 +139,14 @@ fn collect_hunks(diff: &Diff, files: &mut HashMap<PathBuf, Vec<(usize, usize)>>)
     Ok(())
 }
 
-fn collect_untracked(
-    repo: &Repository,
-    files: &mut HashMap<PathBuf, Vec<(usize, usize)>>,
-) -> Result<()> {
+fn collect_untracked(repo: &Repository, untracked: &mut HashSet<PathBuf>) -> Result<()> {
     let mut opts = git2::StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
     let statuses = repo.statuses(Some(&mut opts))?;
     for entry in statuses.iter() {
         if entry.status().is_wt_new() {
             if let Ok(p) = entry.path() {
-                files.entry(PathBuf::from(p)).or_default();
+                untracked.insert(PathBuf::from(p));
             }
         }
     }

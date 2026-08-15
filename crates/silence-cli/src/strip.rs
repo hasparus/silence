@@ -1,7 +1,7 @@
 use anyhow::Result;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
-use silence_core::{strip, CommentKinds, LineMode, Options, PreserveConfig};
+use silence_core::{strip, CommentKinds, LineMode, Lines, Options, PreserveConfig};
 use silence_langs::Lang;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,7 +11,7 @@ use silence_grammars::paths::home_dir;
 
 pub type LineRange = (usize, usize);
 pub type LineRanges = Vec<LineRange>;
-pub type StripJob = (PathBuf, LineRanges);
+pub type StripJob = (PathBuf, Lines);
 
 pub fn lang_for(path: &Path) -> Option<Lang> {
     let ext = path.extension()?.to_str()?;
@@ -58,7 +58,7 @@ pub enum WriteMode {
 pub struct StripOpts {
     pub line_mode: LineMode,
     pub preserve: PreserveConfig,
-    pub line_ranges: LineRanges,
+    pub lines: Lines,
     pub kinds: CommentKinds,
     pub write: WriteMode,
 }
@@ -101,7 +101,7 @@ pub fn build_jobs(paths: &[PathBuf], git_scope: Option<git::Scope>) -> Result<Ve
         return Ok(ch
             .files
             .into_iter()
-            .map(|(rel, ranges)| (ch.root.join(rel), ranges))
+            .map(|(rel, lines)| (ch.root.join(rel), lines))
             .filter(|(p, _)| lang_for(p).is_some())
             .collect());
     }
@@ -111,7 +111,7 @@ pub fn build_jobs(paths: &[PathBuf], git_scope: Option<git::Scope>) -> Result<Ve
     let mut out = Vec::new();
     for p in paths {
         for f in collect_paths(p)? {
-            out.push((f, Vec::new()));
+            out.push((f, Lines::All));
         }
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -133,7 +133,7 @@ pub fn strip_file(path: &Path, opts: &StripOpts) -> StripOutcome {
     let core_opts = Options {
         line_mode: opts.line_mode,
         preserve: opts.preserve.clone(),
-        line_ranges: opts.line_ranges.clone(),
+        lines: opts.lines.clone(),
         kinds: opts.kinds,
     };
 
@@ -199,13 +199,13 @@ pub fn run_batch(
 ) -> Result<BatchOutcome> {
     let results: Vec<StripOutcome> = jobs
         .par_iter()
-        .map(|(path, ranges)| {
+        .map(|(path, lines)| {
             strip_file(
                 path,
                 &StripOpts {
                     line_mode: settings.line_mode,
                     preserve: settings.preserve.clone(),
-                    line_ranges: ranges.clone(),
+                    lines: lines.clone(),
                     kinds: settings.kinds,
                     write: if settings.check {
                         WriteMode::Check

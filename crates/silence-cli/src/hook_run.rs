@@ -1,12 +1,13 @@
 use serde_json::json;
-use silence_core::{CommentKinds, LineMode, PreserveConfig};
+use silence_core::{CommentKinds, LineMode, Lines, PreserveConfig};
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::git;
-use crate::hook_input::{self, HookJob, PatchScope};
-use crate::strip::{lang_for, strip_file, LineRanges, StripOpts, StripOutcome, WriteMode};
+use crate::hook_input::{self, HookJob};
+use crate::strip::{lang_for, strip_file, StripOpts, StripOutcome, WriteMode};
 
 enum HookSkip {
     NotInGitChanges(PathBuf),
@@ -15,24 +16,43 @@ enum HookSkip {
     OutsideRepo(PathBuf),
 }
 
-fn repo_root() -> Option<PathBuf> {
-    let root = git::root().ok()?;
-    Some(root.canonicalize().unwrap_or(root))
+/// The uncommitted diff, for harnesses that do not report what their write
+/// touched. The scan covers the whole tree, so it runs only if a job needs it.
+struct GitFallback {
+    root: PathBuf,
+    changed: OnceCell<HashMap<PathBuf, Lines>>,
 }
 
-/// Every uncommitted line in the repo, used only for harnesses that do not
-/// report what their write touched. Deferred because it diffs the whole tree.
-fn git_ranges(root: &Path) -> HashMap<PathBuf, LineRanges> {
-    let Ok(ch) = git::changes(git::Scope::All) else {
-        return HashMap::new();
-    };
-    let mut ranges = HashMap::new();
-    for (rel, r) in ch.files {
-        let abs = root.join(rel);
-        let key = abs.canonicalize().unwrap_or(abs);
-        ranges.insert(key, r);
+impl GitFallback {
+    fn discover() -> Option<GitFallback> {
+        let root = git::root().ok()?;
+        Some(GitFallback {
+            root: root.canonicalize().unwrap_or(root),
+            changed: OnceCell::new(),
+        })
     }
-    ranges
+
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// `None` for a file with nothing uncommitted — there is no basis to strip it.
+    fn lines_for(&self, path: &Path) -> Option<Lines> {
+        self.changed.get_or_init(|| self.scan()).get(path).cloned()
+    }
+
+    fn scan(&self) -> HashMap<PathBuf, Lines> {
+        let Ok(ch) = git::changes(git::Scope::All) else {
+            return HashMap::new();
+        };
+        ch.files
+            .into_iter()
+            .map(|(rel, lines)| {
+                let abs = self.root.join(rel);
+                (abs.canonicalize().unwrap_or(abs), lines)
+            })
+            .collect()
+    }
 }
 
 /// A harness can name the same file twice — relative in the tool input,
@@ -46,9 +66,9 @@ fn dedupe_by_canonical_path(jobs: &mut Vec<HookJob>) {
         }
     }
     jobs.sort_by(|a, b| {
-        a.path.cmp(&b.path).then_with(|| {
-            matches!(a.scope, PatchScope::Unknown).cmp(&matches!(b.scope, PatchScope::Unknown))
-        })
+        a.path
+            .cmp(&b.path)
+            .then_with(|| a.lines.is_none().cmp(&b.lines.is_none()))
     });
     jobs.dedup_by(|a, b| a.path == b.path);
 }
@@ -75,7 +95,7 @@ fn hook_targets(mut jobs: Vec<HookJob>, root: Option<&Path>) -> Vec<HookJob> {
 }
 
 pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
-    let root = repo_root();
+    let fallback = GitFallback::discover();
     let jobs = if explicit.is_empty() {
         read_stdin_jobs()
     } else {
@@ -83,11 +103,11 @@ pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
             .iter()
             .map(|path| HookJob {
                 path: path.clone(),
-                scope: PatchScope::Unknown,
+                lines: None,
             })
             .collect()
     };
-    let targets = hook_targets(jobs, root.as_deref());
+    let targets = hook_targets(jobs, fallback.as_ref().map(GitFallback::root));
     if targets.is_empty() {
         return;
     }
@@ -95,28 +115,19 @@ pub fn run_hook(explicit: &[PathBuf], preserve: &PreserveConfig) {
     let opts = StripOpts {
         line_mode: LineMode::Collapse,
         preserve: preserve.clone(),
-        line_ranges: Vec::new(),
+        lines: Lines::All,
         kinds: CommentKinds::default(),
         write: WriteMode::Hook,
     };
 
     let mut stripped: Vec<(PathBuf, usize)> = Vec::new();
-    let mut fallback = None;
-    for HookJob { path, scope } in targets {
-        let ranges = match scope {
-            PatchScope::WholeFile => Vec::new(),
-            PatchScope::Added(ranges) if ranges.is_empty() => continue,
-            PatchScope::Added(ranges) => ranges,
-            PatchScope::Unknown => {
-                let Some(ranges) = hook_line_ranges(&path, root.as_deref(), &mut fallback) else {
-                    log_skip(HookSkip::NotInGitChanges(path));
-                    continue;
-                };
-                ranges
-            }
+    for HookJob { path, lines } in targets {
+        let Some(lines) = lines.or_else(|| fallback_lines(fallback.as_ref(), &path)) else {
+            log_skip(HookSkip::NotInGitChanges(path));
+            continue;
         };
         let file_opts = StripOpts {
-            line_ranges: ranges,
+            lines,
             ..opts.clone()
         };
         match strip_file(&path, &file_opts) {
@@ -183,18 +194,13 @@ fn log_skip(skip: HookSkip) {
     }
 }
 
-fn hook_line_ranges(
-    path: &Path,
-    root: Option<&Path>,
-    cache: &mut Option<HashMap<PathBuf, LineRanges>>,
-) -> Option<LineRanges> {
-    let Some(root) = root else {
-        return Some(Vec::new());
-    };
-    cache
-        .get_or_insert_with(|| git_ranges(root))
-        .get(path)
-        .cloned()
+/// Outside a repository there is nothing to diff against, so the whole file is
+/// the agent's as far as we can tell.
+fn fallback_lines(fallback: Option<&GitFallback>, path: &Path) -> Option<Lines> {
+    match fallback {
+        None => Some(Lines::All),
+        Some(git) => git.lines_for(path),
+    }
 }
 
 fn read_stdin_jobs() -> Vec<HookJob> {

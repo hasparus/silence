@@ -52,11 +52,20 @@ impl CommentKinds {
     }
 }
 
+/// Which lines of a file a strip applies to. `Ranges` with nothing in it means
+/// nothing is in scope, which is why it is not the same value as `All`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Lines {
+    #[default]
+    All,
+    Ranges(Vec<(usize, usize)>),
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Options {
     pub line_mode: LineMode,
     pub preserve: PreserveConfig,
-    pub line_ranges: Vec<(usize, usize)>,
+    pub lines: Lines,
     pub kinds: CommentKinds,
 }
 
@@ -191,13 +200,13 @@ fn comment_kind_from_text(text: &str) -> CommentKind {
     }
 }
 
-fn in_ranges(comment: &Comment, ranges: &[(usize, usize)]) -> bool {
-    if ranges.is_empty() {
-        return true;
+fn in_lines(comment: &Comment, lines: &Lines) -> bool {
+    match lines {
+        Lines::All => true,
+        Lines::Ranges(ranges) => ranges
+            .iter()
+            .any(|&(s, e)| comment.start_row <= e && comment.end_row >= s),
     }
-    ranges
-        .iter()
-        .any(|&(s, e)| comment.start_row <= e && comment.end_row >= s)
 }
 
 /// # Errors
@@ -208,7 +217,7 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
     let mut to_remove: Vec<&Comment> = Vec::new();
     let mut preserved = 0usize;
     for c in &comments {
-        if !in_ranges(c, &opts.line_ranges) {
+        if !in_lines(c, &opts.lines) {
             continue;
         }
         if !opts.kinds.allows(c.kind) {
@@ -446,7 +455,7 @@ mod tests {
     fn line_ranges_limit_scope() -> TestResult {
         let src = "// keep\nlet x = 1;\nlet y = 2; // go\n";
         let opts = Options {
-            line_ranges: vec![(3, 3)],
+            lines: Lines::Ranges(vec![(3, 3)]),
             ..Default::default()
         };
         let out = strip(src, Lang::Rust, &opts)?.output;
@@ -622,7 +631,7 @@ mod tests {
     fn astro_line_ranges_use_file_rows() -> TestResult {
         let src = "---\nlet a = 1; // keep\nlet b = 2; // go\n---\n";
         let opts = Options {
-            line_ranges: vec![(3, 3)],
+            lines: Lines::Ranges(vec![(3, 3)]),
             ..Default::default()
         };
         assert_eq!(
