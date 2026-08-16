@@ -144,6 +144,17 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
                 _ => continue,
             };
 
+            let (start_byte, end_byte, start, end) =
+                match jsx_wrapper(node, source, start_byte, end_byte) {
+                    Some(w) => (
+                        w.start_byte(),
+                        w.end_byte(),
+                        w.start_position(),
+                        w.end_position(),
+                    ),
+                    None => (start_byte, end_byte, start, end),
+                };
+
             out.push(Comment {
                 start_byte,
                 end_byte,
@@ -159,6 +170,25 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
 
     out.sort_by_key(|c| c.start_byte);
     Ok(out)
+}
+
+/// The `{ … }` of a JSX expression that exists only to carry this comment.
+/// Removing the comment alone would leave a bare `{}` behind in the markup, so
+/// the braces are part of the comment's span. An expression holding anything
+/// else — a second comment, an expression — keeps them.
+fn jsx_wrapper<'a>(
+    node: tree_sitter::Node<'a>,
+    source: &str,
+    start_byte: usize,
+    end_byte: usize,
+) -> Option<tree_sitter::Node<'a>> {
+    let parent = node.parent()?;
+    if parent.kind() != "jsx_expression" {
+        return None;
+    }
+    let before = source.get(parent.start_byte() + 1..start_byte)?;
+    let after = source.get(end_byte..parent.end_byte().checked_sub(1)?)?;
+    (before.trim().is_empty() && after.trim().is_empty()).then_some(parent)
 }
 
 /// Re-parse injected sub-language regions (e.g. Astro frontmatter as TypeScript)
@@ -703,12 +733,47 @@ mod tests {
         Ok(())
     }
 
+    /// A `{}` left where a comment was is not valid-looking markup; the braces
+    /// belong to the comment.
     #[test]
-    fn jsx_comment_in_element_is_removed() -> TestResult {
+    fn jsx_comment_takes_its_braces_with_it() -> TestResult {
         let src = "const a = <div>{/* note */}</div>;\n";
         assert_eq!(
             strip_default(src, Lang::JavaScript)?,
-            "const a = <div>{}</div>;\n"
+            "const a = <div></div>;\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_jsx_comment_on_its_own_line_leaves_no_braces() -> TestResult {
+        let src = "<div>\n  {/* the card */}\n  <Card />\n</div>\n";
+        assert_eq!(
+            strip_default(src, Lang::Tsx)?,
+            "<div>\n  <Card />\n</div>\n"
+        );
+        Ok(())
+    }
+
+    /// The braces are only the comment's when the comment is all they hold.
+    #[test]
+    fn braces_holding_more_than_a_comment_stay() -> TestResult {
+        let src = "const a = <div>{/* note */ value}</div>;\n";
+        assert_eq!(
+            strip_default(src, Lang::Tsx)?,
+            "const a = <div>{ value}</div>;\n"
+        );
+        Ok(())
+    }
+
+    /// A preserved marker keeps its braces, or the JSX around it stops parsing.
+    #[test]
+    fn a_preserved_jsx_marker_keeps_its_braces() -> TestResult {
+        let src = "<div>\n  {/* codegen-start abc */}\n  {/* slop */}\n  {/* codegen-end abc */}\n</div>\n";
+        let out = strip_default(src, Lang::Tsx)?;
+        assert_eq!(
+            out,
+            "<div>\n  {/* codegen-start abc */}\n  {/* codegen-end abc */}\n</div>\n"
         );
         Ok(())
     }

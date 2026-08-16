@@ -11,6 +11,8 @@ pub const DEFAULT_PRESERVE_PATTERNS: &[&str] = &[
     "SAFETY",
     "no-op",
     "No-op",
+    "noop",
+    "Noop",
     "#region",
     "#endregion",
     "biome-",
@@ -158,7 +160,7 @@ impl PreserveConfig {
     #[must_use]
     pub fn should_preserve(&self, comment_text: &str) -> bool {
         let trimmed = comment_text.trim();
-        if self.literals.iter().any(|l| trimmed.contains(l.as_str())) {
+        if self.literals.iter().any(|l| contains_word(trimmed, l)) {
             return true;
         }
         if let Some(set) = &self.globs {
@@ -187,6 +189,32 @@ impl FilePreserve<'_> {
     pub(crate) fn should_preserve(&self, comment: &Comment) -> bool {
         self.config.should_preserve(&comment.text) || self.markers.contains(&comment.start_byte)
     }
+}
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// A literal matches anywhere inside a comment, but only as a whole word:
+/// `noop` names a deliberate empty branch, `snoop` and `noopener` do not.
+///
+/// Only the word-shaped ends of a pattern are constrained, so `#region` and
+/// `biome-` still match the way they read. A trailing `s` is the same word, so
+/// `TODOs` keeps preserving the way `TODO` does.
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    let (head_is_word, tail_is_word) = (needle.starts_with(is_word), needle.ends_with(is_word));
+    if !head_is_word && !tail_is_word {
+        return haystack.contains(needle);
+    }
+    haystack.match_indices(needle).any(|(i, _)| {
+        let before_ok = !head_is_word || !haystack[..i].chars().next_back().is_some_and(is_word);
+        let mut after = haystack[i + needle.len()..].chars();
+        let next = after.next();
+        let after_ok = !tail_is_word
+            || !next.is_some_and(is_word)
+            || (matches!(next, Some('s' | 'S')) && !after.next().is_some_and(is_word));
+        before_ok && after_ok
+    })
 }
 
 fn looks_like_doc_comment(text: &str) -> bool {
@@ -321,6 +349,29 @@ mod tests {
         let c = PreserveConfig::default();
         assert!(c.should_preserve("// no-op"));
         assert!(c.should_preserve("// no-op, the caller already flushed"));
+    }
+
+    /// `noop` is short enough to hide inside ordinary words.
+    #[test]
+    fn noop_survives_without_swallowing_the_words_it_hides_in() {
+        let c = PreserveConfig::default();
+        assert!(c.should_preserve("// noop"));
+        assert!(c.should_preserve("// noop, the caller already flushed"));
+        assert!(c.should_preserve("// Noop until the queue drains"));
+        assert!(!c.should_preserve("// snoop on the socket"));
+        assert!(!c.should_preserve("// rel=noopener keeps the tab safe"));
+    }
+
+    /// A pattern is a word, not a prefix: plurals are the same word, longer
+    /// words are not.
+    #[test]
+    fn literals_match_whole_words() {
+        let c = PreserveConfig::with_patterns(vec!["TODO".into(), "#region".into()]);
+        assert!(c.should_preserve("// TODO: this"));
+        assert!(c.should_preserve("// TODOs: a, b"));
+        assert!(!c.should_preserve("// TODOMORROW"));
+        assert!(c.should_preserve("// #region setup"));
+        assert!(c.should_preserve("//#region setup"));
     }
 
     #[test]

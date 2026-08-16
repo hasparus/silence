@@ -109,6 +109,14 @@ colon forms (`codegen:start`) are kept by the directive rule instead and are not
 subject to the pairing requirement. A file holding both `// week-start` and
 `// week-end` keeps both — over-preserving is the safe direction.
 
+Patterns match anywhere in a comment but only as whole words, so `noop` keeps
+`// noop` without keeping `// snoop on the socket`. A trailing `s` is the same
+word (`TODOs`), and a pattern's punctuated ends are unconstrained (`#region`,
+`biome-`).
+
+In JSX, a `{/* … */}` that holds nothing but the comment loses its braces too —
+a bare `{}` left in the markup is worse than the comment was.
+
 `.silence.toml` (searched cwd → git root → `~/.config/.silence.toml`):
 
 ```toml
