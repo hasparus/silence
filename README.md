@@ -109,6 +109,23 @@ colon forms (`codegen:start`) are kept by the directive rule instead and are not
 subject to the pairing requirement. A file holding both `// week-start` and
 `// week-end` keeps both — over-preserving is the safe direction.
 
+Patterns match anywhere in a comment but only as whole words, so `noop` keeps
+`// noop` without keeping `// snoop on the socket`. A trailing `s` is the same
+word (`TODOs`), a pattern's punctuated ends are unconstrained (`#region`,
+`biome-`), and only an ASCII neighbour can continue a word — `// TODO修复这个`
+is still a TODO. A pattern written in lower case matches any casing (`noop`
+covers `NOOP`); one written with a capital must match as written, so `HACK`
+stays a marker while `// half-baked hack.` stays prose.
+
+In JSX, braces holding nothing but comments go when the last of those comments
+goes *and* removing them cannot change what the markup renders — a bare `{}`
+left in the markup is worse than the comment was, but changing the rendered
+text is worse still. An expression container splits the text around it, and a
+line break renders as a space inside a run of text and as nothing at its edge,
+so the braces sometimes hold a space apart. Where they do, a `{}` stays: that
+is the tool saying it checked. A surviving comment keeps them too, since it
+still has to live somewhere.
+
 `.silence.toml` (searched cwd → git root → `~/.config/.silence.toml`):
 
 ```toml

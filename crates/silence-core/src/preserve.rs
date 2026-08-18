@@ -10,7 +10,7 @@ pub const DEFAULT_PRESERVE_PATTERNS: &[&str] = &[
     "XXX",
     "SAFETY",
     "no-op",
-    "No-op",
+    "noop",
     "#region",
     "#endregion",
     "biome-",
@@ -27,9 +27,19 @@ pub const DEFAULT_PRESERVE_PATTERNS: &[&str] = &[
     "nolint",
 ];
 
+/// A literal preserve pattern. Written in lower case it matches any casing, so
+/// `noop` answers for `NOOP` and `Noop` too. Written with a capital it must
+/// match as written, which is what keeps `HACK` a marker while
+/// `// half-baked hack.` stays the prose this tool exists to delete.
+#[derive(Debug, Clone)]
+struct Literal {
+    text: String,
+    fold: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct PreserveConfig {
-    literals: Vec<String>,
+    literals: Vec<Literal>,
     globs: Option<GlobSet>,
     directives: bool,
     invalid: Vec<String>,
@@ -82,7 +92,8 @@ impl PreserveConfig {
                     Err(_) => invalid.push(p),
                 }
             } else {
-                literals.push(p);
+                let fold = !p.contains(|c: char| c.is_ascii_uppercase());
+                literals.push(Literal { text: p, fold });
             }
         }
 
@@ -155,10 +166,18 @@ impl PreserveConfig {
 
     /// The per-comment half of the rule. Machine markers also need the rest of
     /// the file to decide, so [`crate::strip`] is the complete entry point.
+    ///
+    /// A literal written in lower case matches any casing; one written with a
+    /// capital must match as written.
     #[must_use]
     pub fn should_preserve(&self, comment_text: &str) -> bool {
         let trimmed = comment_text.trim();
-        if self.literals.iter().any(|l| trimmed.contains(l.as_str())) {
+        let folded = trimmed.to_ascii_lowercase();
+        if self
+            .literals
+            .iter()
+            .any(|l| contains_word(if l.fold { &folded } else { trimmed }, &l.text))
+        {
             return true;
         }
         if let Some(set) = &self.globs {
@@ -186,6 +205,39 @@ pub(crate) struct FilePreserve<'a> {
 impl FilePreserve<'_> {
     pub(crate) fn should_preserve(&self, comment: &Comment) -> bool {
         self.config.should_preserve(&comment.text) || self.markers.contains(&comment.start_byte)
+    }
+}
+
+/// Deliberately ASCII, and deliberately not the token-separation rule's
+/// idea of a word. Every preserve pattern is ASCII, and a neighbour outside that
+/// alphabet cannot be continuing one: `// TODO修复这个` is a TODO, and so is
+/// `// TODO_LATER`. Only a neighbour from the pattern's own alphabet can mean
+/// the match is really part of a longer word.
+fn ascii_word(c: char) -> bool {
+    c.is_ascii_alphanumeric()
+}
+
+/// A literal matches anywhere inside a comment, but only as a whole word:
+/// `noop` names a deliberate empty branch, `snoop` and `noopener` do not.
+///
+/// Only the word-shaped ends of a pattern are constrained, so `#region` and
+/// `biome-` still match the way they read.
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    let head_bound = needle.starts_with(ascii_word);
+    let tail_bound = needle.ends_with(ascii_word);
+    haystack.match_indices(needle).any(|(i, _)| {
+        let before = !head_bound || !haystack[..i].chars().next_back().is_some_and(ascii_word);
+        let after = !tail_bound || ends_word(&haystack[i + needle.len()..]);
+        before && after
+    })
+}
+
+/// A plural is the same word, so `TODOs` preserves the way `TODO` does.
+fn ends_word(rest: &str) -> bool {
+    let mut chars = rest.chars();
+    match chars.next() {
+        Some('s' | 'S') => !chars.next().is_some_and(ascii_word),
+        next => !next.is_some_and(ascii_word),
     }
 }
 
@@ -321,6 +373,57 @@ mod tests {
         let c = PreserveConfig::default();
         assert!(c.should_preserve("// no-op"));
         assert!(c.should_preserve("// no-op, the caller already flushed"));
+    }
+
+    /// `noop` is short enough to hide inside ordinary words.
+    #[test]
+    fn noop_survives_without_swallowing_the_words_it_hides_in() {
+        let c = PreserveConfig::default();
+        assert!(c.should_preserve("// noop"));
+        assert!(c.should_preserve("// noop, the caller already flushed"));
+        assert!(c.should_preserve("// Noop until the queue drains"));
+        assert!(!c.should_preserve("// snoop on the socket"));
+        assert!(!c.should_preserve("// rel=noopener keeps the tab safe"));
+    }
+
+    /// A marker written against a non-ASCII alphabet is still that marker; only
+    /// a neighbour from the pattern's own alphabet can continue the word.
+    #[test]
+    fn a_marker_survives_a_neighbour_it_shares_no_alphabet_with() {
+        let c = PreserveConfig::default();
+        for comment in [
+            "// TODO修复这个",
+            "// FIXMEしてください",
+            "// SAFETYпроверка",
+            "// TODOΩ",
+            "// TODO_LATER wire this up",
+        ] {
+            assert!(c.should_preserve(comment), "{comment} should survive");
+        }
+    }
+
+    /// Marker conventions are shouted, so an all-caps pattern stays exact and
+    /// the lower-case word it spells stays prose.
+    #[test]
+    fn case_folds_only_for_a_lower_case_pattern() {
+        let c = PreserveConfig::default();
+        assert!(c.should_preserve("// NOOP"));
+        assert!(c.should_preserve("// Noop"));
+        assert!(c.should_preserve("// No-op"));
+        assert!(!c.should_preserve("// half-baked hack."));
+        assert!(!c.should_preserve("// a todo for later"));
+    }
+
+    /// A pattern is a word, not a prefix: plurals are the same word, longer
+    /// words are not.
+    #[test]
+    fn literals_match_whole_words() {
+        let c = PreserveConfig::with_patterns(vec!["TODO".into(), "#region".into()]);
+        assert!(c.should_preserve("// TODO: this"));
+        assert!(c.should_preserve("// TODOs: a, b"));
+        assert!(!c.should_preserve("// TODOMORROW"));
+        assert!(c.should_preserve("// #region setup"));
+        assert!(c.should_preserve("//#region setup"));
     }
 
     #[test]
