@@ -340,6 +340,47 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
     })
 }
 
+/// A cut narrowed to the interior of its delimiters, leaving them in place,
+/// unless taking them is provably invisible.
+fn narrow_to_interior(source: &str, removal: Removal) -> (Span, bool) {
+    let span = removal.span;
+    if !removal.delimited || takes_delimiters(source, span) {
+        return (span, removal.delimited);
+    }
+    let interior = Span {
+        start_byte: span.start_byte + 1,
+        end_byte: span.end_byte - 1,
+        ..span
+    };
+    (interior, false)
+}
+
+/// Whether these delimiters can go without changing what the markup renders.
+///
+/// JSX drops a run of whitespace that contains a newline and keeps one that
+/// does not, and an expression container splits the text around it. So only
+/// two positions are safe: alone on its line, where the whitespace either side
+/// already carries a newline and is dropped regardless; and pressed between two
+/// non-blank characters, where removing the container just joins them.
+///
+/// Anywhere else the delimiters are holding a rendered space apart —
+/// `Signed in as {…}` at a line end, `{…} and counting` at a line start,
+/// `A{…} {…}B` around a space — and they stay, empty, as they were before.
+fn takes_delimiters(source: &str, span: Span) -> bool {
+    let line_start = source[..span.start_byte].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = source[span.end_byte..]
+        .find('\n')
+        .map_or(source.len(), |i| span.end_byte + i);
+    if source[line_start..span.start_byte].trim().is_empty()
+        && source[span.end_byte..line_end].trim().is_empty()
+    {
+        return true;
+    }
+    let before = source[..span.start_byte].chars().next_back();
+    let after = source[span.end_byte..].chars().next();
+    matches!((before, after), (Some(b), Some(a)) if !b.is_whitespace() && !a.is_whitespace())
+}
+
 /// One cut to make, and whether it takes delimiters with it. `strip` knows
 /// which it is, so nothing downstream has to work it out from the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,24 +390,17 @@ struct Removal {
 }
 
 /// Runs of removals separated by nothing but padding, merged so the line they
-/// sit on is judged once.
-///
-/// Padding between two comments is the caller's to take. Between two sets of
-/// delimiters it is content — `A{/* a */} {/* b */}B` renders `A B` — so it is
-/// only merged away when the whole line is going anyway.
+/// sit on is judged once. Delimited cuts never merge: what sits between two of
+/// them is content, and each answers for its own delimiters.
 fn coalesce_same_line(source: &str, spans: &[Removal]) -> Vec<Removal> {
     let mut out: Vec<Removal> = Vec::with_capacity(spans.len());
     for &c in spans {
         if let Some(last) = out.last_mut() {
-            if c.span.start_byte >= last.span.end_byte {
+            if !last.delimited && !c.delimited && c.span.start_byte >= last.span.end_byte {
                 let gap = &source[last.span.end_byte..c.span.start_byte];
-                let padding = gap.bytes().all(|b| b == b' ' || b == b'\t');
-                let keeps_content =
-                    (last.delimited || c.delimited) && !alone_on_line(source, last.span, c.span);
-                if padding && !keeps_content {
+                if gap.bytes().all(|b| b == b' ' || b == b'\t') {
                     last.span.end_byte = c.span.end_byte;
                     last.span.end_row = c.span.end_row;
-                    last.delimited |= c.delimited;
                     continue;
                 }
             }
@@ -374,17 +408,6 @@ fn coalesce_same_line(source: &str, spans: &[Removal]) -> Vec<Removal> {
         out.push(c);
     }
     out
-}
-
-/// Whether nothing but whitespace shares the line with these two spans, in
-/// which case the line goes whole and what lay between them goes with it.
-fn alone_on_line(source: &str, first: Span, last: Span) -> bool {
-    let line_start = source[..first.start_byte].rfind('\n').map_or(0, |i| i + 1);
-    let line_end = source[last.end_byte..]
-        .find('\n')
-        .map_or(source.len(), |i| last.end_byte + i);
-    source[line_start..first.start_byte].trim().is_empty()
-        && source[last.end_byte..line_end].trim().is_empty()
 }
 
 fn separator_needed(left: &str, right: &str) -> bool {
@@ -412,7 +435,7 @@ fn rewrite(source: &str, remove: &[Removal], mode: LineMode) -> String {
     let mut cursor = 0usize;
 
     for removal in remove {
-        let c = removal.span;
+        let (c, delimited) = narrow_to_interior(source, *removal);
         if c.start_byte < cursor {
             continue;
         }
@@ -455,7 +478,7 @@ fn rewrite(source: &str, remove: &[Removal], mode: LineMode) -> String {
             if line_end > c.end_byte && bytes[line_end - 1] == b'\r' {
                 cursor = line_end - 1;
             }
-        } else if removal.delimited {
+        } else if delimited {
             cursor = c.end_byte;
         } else {
             let trimmed_len = result.trim_end_matches([' ', '\t']).len();
@@ -888,14 +911,35 @@ mod tests {
         Ok(())
     }
 
-    /// The text around the braces is content the author wrote. Taking the
-    /// braces must not take the space in front of them with it.
+    /// JSX trims a space at the edge of a line but keeps one beside an
+    /// expression container, so at a line edge the braces are the only reason
+    /// the rendered space survives. They stay, empty, exactly as before.
     #[test]
-    fn removing_braces_keeps_the_text_beside_them() -> TestResult {
+    fn braces_holding_a_rendered_space_stay_empty() -> TestResult {
+        let trailing =
+            "const A = (\n  <p>\n    Signed in as {/* name */}\n    <b>{n}</b>.\n  </p>\n);\n";
+        assert_eq!(
+            strip_default(trailing, Lang::Tsx)?,
+            "const A = (\n  <p>\n    Signed in as {}\n    <b>{n}</b>.\n  </p>\n);\n"
+        );
+
+        let leading =
+            "const B = (\n  <p>\n    <b>{f}</b>\n    {/* note */} and counting\n  </p>\n);\n";
+        assert_eq!(
+            strip_default(leading, Lang::Tsx)?,
+            "const B = (\n  <p>\n    <b>{f}</b>\n    {} and counting\n  </p>\n);\n"
+        );
+        Ok(())
+    }
+
+    /// A space on one side and markup on the other is exactly the position
+    /// where the braces hold the rendered space apart, so they stay.
+    #[test]
+    fn braces_beside_a_space_stay_empty() -> TestResult {
         let src = "const C = () => <p>\n  Signed in as {/* display name */}<b>{name}</b>.\n</p>;\n";
         assert_eq!(
             strip_default(src, Lang::Tsx)?,
-            "const C = () => <p>\n  Signed in as <b>{name}</b>.\n</p>;\n"
+            "const C = () => <p>\n  Signed in as {}<b>{name}</b>.\n</p>;\n"
         );
         Ok(())
     }
@@ -905,15 +949,19 @@ mod tests {
     #[test]
     fn a_space_between_two_wrappers_is_content() -> TestResult {
         let src = "const y = <p>A{/* a */} {/* b */}B</p>;\n";
-        assert_eq!(strip_default(src, Lang::Tsx)?, "const y = <p>A B</p>;\n");
+        assert_eq!(
+            strip_default(src, Lang::Tsx)?,
+            "const y = <p>A{} {}B</p>;\n"
+        );
         Ok(())
     }
 
-    /// When the whole line is going, what lay between the wrappers goes too.
+    /// Two wrappers sharing a line are not alone on it: the space between
+    /// them renders, so neither set of braces can go.
     #[test]
-    fn wrappers_alone_on_a_line_take_the_line() -> TestResult {
+    fn two_wrappers_on_one_line_keep_their_braces() -> TestResult {
         let src = "<Row>\n  {/* left */ /* icon */} {/* right */}\n</Row>\n";
-        assert_eq!(strip_default(src, Lang::Tsx)?, "<Row>\n</Row>\n");
+        assert_eq!(strip_default(src, Lang::Tsx)?, "<Row>\n  {} {}\n</Row>\n");
         Ok(())
     }
 
