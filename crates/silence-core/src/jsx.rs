@@ -179,13 +179,49 @@ fn split_lines(text: &str) -> Vec<&str> {
     out
 }
 
-/// Text this rule is willing to reason about. Whitespace outside the ASCII
-/// kinds is refused: which of those count as line padding is a longer list in
-/// TypeScript than in Babel, and modelling the difference buys nothing that
-/// real files ask for.
+/// Text this rule is willing to reason about.
+///
+/// Whitespace outside the ASCII kinds is refused: which of those count as line
+/// padding is a longer list in TypeScript than in Babel, and modelling the
+/// difference buys nothing real files ask for. `U+FEFF` is refused with them —
+/// Rust does not call it whitespace but TypeScript and esbuild trim it.
+///
+/// A character reference that decodes to whitespace is refused too, because
+/// the compilers disagree about *when* they decode: Babel decodes before
+/// trimming line padding, so `&#32;` at a line edge is padding it removes,
+/// while TypeScript trims first and sees five characters of content. Reading
+/// the raw text cannot be right for both.
 fn is_plain_text(run: &str) -> bool {
     !run.chars()
-        .any(|c| c.is_whitespace() && !matches!(c, ' ' | '\t' | '\n' | '\r'))
+        .any(|c| (c.is_whitespace() || c == '\u{feff}') && !matches!(c, ' ' | '\t' | '\n' | '\r'))
+        && !has_whitespace_reference(run)
+}
+
+/// Whether the run spells a character reference standing for padding or a line
+/// break — the only decoded characters the trimming rule reacts to. A reference
+/// for a non-breaking space is content to both compilers, so it is no reason to
+/// keep the braces.
+fn has_whitespace_reference(run: &str) -> bool {
+    const NAMED: [&str; 2] = ["Tab", "NewLine"];
+    const REACTIVE: [char; 6] = [' ', '\t', '\n', '\r', '\u{2028}', '\u{2029}'];
+    run.match_indices('&').any(|(at, _)| {
+        let rest = &run[at + 1..];
+        let Some(end) = rest.find(';') else {
+            return false;
+        };
+        let body = &rest[..end];
+        match body.strip_prefix('#') {
+            Some(digits) => {
+                let code = match digits.strip_prefix(['x', 'X']) {
+                    Some(hex) => u32::from_str_radix(hex, 16).ok(),
+                    None => digits.parse().ok(),
+                };
+                code.and_then(char::from_u32)
+                    .is_some_and(|c| REACTIVE.contains(&c))
+            }
+            None => NAMED.contains(&body),
+        }
+    })
 }
 
 /// Whether joining the runs could spell an entity that no run spells alone.
@@ -269,6 +305,19 @@ mod tests {
         assert_eq!(split_lines("a\nb"), vec!["a", "b"]);
         assert_eq!(clean_text("a\rb", Reading::Babel), "a b");
         assert_eq!(clean_text("a\r\nb", Reading::Babel), "a b");
+    }
+
+    /// A reference standing for whitespace is padding to Babel, which decodes
+    /// before trimming, and content to TypeScript, which trims first.
+    #[test]
+    fn a_reference_that_spells_whitespace_is_refused() {
+        assert!(!is_plain_text("a&#10;"));
+        assert!(!is_plain_text("&#32;b"));
+        assert!(!is_plain_text("&#x20;"));
+        assert!(is_plain_text("&nbsp;"));
+        assert!(!is_plain_text("a\u{feff}b"));
+        assert!(is_plain_text("a&amp;b"));
+        assert!(is_plain_text("a&#39;b"));
     }
 
     /// Compilers disagree about tabs, so a tab is read both ways rather than
