@@ -432,14 +432,39 @@ fn braces_holding_a_rendered_space_stay_empty() -> TestResult {
     Ok(())
 }
 
-/// A space on one side and markup on the other is exactly the position
-/// where the braces hold the rendered space apart, so they stay.
+/// Between two lines of prose the newlines sit at the edge of their own runs
+/// and render as nothing; joined into one run they become a space. The braces
+/// are what keeps them apart.
 #[test]
-fn braces_beside_a_space_stay_empty() -> TestResult {
+fn braces_between_two_lines_of_prose_stay() -> TestResult {
+    let src = "const T = (\n  <p>\n    a\n    {/* c */}\n    b\n  </p>\n);\n";
+    assert_eq!(
+        strip_default(src, Lang::Tsx)?,
+        "const T = (\n  <p>\n    a\n    {}\n    b\n  </p>\n);\n"
+    );
+    Ok(())
+}
+
+/// Entities are read per run of text, so joining two runs can spell one that
+/// was never written: `&amp` beside `;` is not `&amp;`.
+#[test]
+fn braces_that_would_spell_an_entity_stay() -> TestResult {
+    let src = "const U = <p>&amp{/* c */};</p>;\n";
+    assert_eq!(
+        strip_default(src, Lang::Tsx)?,
+        "const U = <p>&amp{};</p>;\n"
+    );
+    Ok(())
+}
+
+/// A space on one side and markup on the other reads the same either way, so
+/// the braces go and the space the author wrote stays.
+#[test]
+fn braces_go_where_the_text_reads_the_same_without_them() -> TestResult {
     let src = "const C = () => <p>\n  Signed in as {/* display name */}<b>{name}</b>.\n</p>;\n";
     assert_eq!(
         strip_default(src, Lang::Tsx)?,
-        "const C = () => <p>\n  Signed in as {}<b>{name}</b>.\n</p>;\n"
+        "const C = () => <p>\n  Signed in as <b>{name}</b>.\n</p>;\n"
     );
     Ok(())
 }
@@ -449,10 +474,7 @@ fn braces_beside_a_space_stay_empty() -> TestResult {
 #[test]
 fn a_space_between_two_wrappers_is_content() -> TestResult {
     let src = "const y = <p>A{/* a */} {/* b */}B</p>;\n";
-    assert_eq!(
-        strip_default(src, Lang::Tsx)?,
-        "const y = <p>A{} {}B</p>;\n"
-    );
+    assert_eq!(strip_default(src, Lang::Tsx)?, "const y = <p>A B</p>;\n");
     Ok(())
 }
 

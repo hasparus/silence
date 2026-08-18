@@ -2,6 +2,7 @@ use silence_langs::Lang;
 use std::collections::HashSet;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
+mod jsx;
 mod preserve;
 mod rewrite;
 pub use preserve::{PreserveConfig, DEFAULT_PRESERVE_PATTERNS};
@@ -170,12 +171,14 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
                 end_row: end.row + 1,
                 text,
                 kind,
-                enclosed_by: comment_only_wrapper(node, source, lang).map(|w| Span {
-                    start_byte: w.start_byte(),
-                    end_byte: w.end_byte(),
-                    start_row: w.start_position().row + 1,
-                    end_row: w.end_position().row + 1,
-                }),
+                enclosed_by: comment_only_wrapper(node, source, lang)
+                    .filter(|w| jsx::taking_braces_is_invisible(source, *w))
+                    .map(|w| Span {
+                        start_byte: w.start_byte(),
+                        end_byte: w.end_byte(),
+                        start_row: w.start_position().row + 1,
+                        end_row: w.end_position().row + 1,
+                    }),
             });
         }
     }
@@ -245,6 +248,8 @@ fn collect_injected<'a>(
                 c.end_byte += byte_off;
                 c.start_row += row_off;
                 c.end_row += row_off;
+                // Dead while the only injection is Astro's TypeScript
+                // frontmatter, which has no JSX. Correct the day one does.
                 if let Some(s) = &mut c.enclosed_by {
                     s.start_byte += byte_off;
                     s.end_byte += byte_off;

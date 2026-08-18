@@ -208,8 +208,8 @@ impl FilePreserve<'_> {
     }
 }
 
-/// Deliberately ASCII, and deliberately not [`crate::separator_needed`]'s idea
-/// of a word. Every preserve pattern is ASCII, and a neighbour outside that
+/// Deliberately ASCII, and deliberately not the token-separation rule's
+/// idea of a word. Every preserve pattern is ASCII, and a neighbour outside that
 /// alphabet cannot be continuing one: `// TODO修复这个` is a TODO, and so is
 /// `// TODO_LATER`. Only a neighbour from the pattern's own alphabet can mean
 /// the match is really part of a longer word.

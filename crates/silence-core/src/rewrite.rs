@@ -9,47 +9,6 @@ pub(crate) struct Span {
     pub(crate) end_row: usize,
 }
 
-/// A cut narrowed to the interior of its delimiters, leaving them in place,
-/// unless taking them is provably invisible.
-pub(crate) fn narrow_to_interior(source: &str, removal: Removal) -> (Span, bool) {
-    let span = removal.span;
-    if !removal.delimited || takes_delimiters(source, span) {
-        return (span, removal.delimited);
-    }
-    let interior = Span {
-        start_byte: span.start_byte + 1,
-        end_byte: span.end_byte - 1,
-        ..span
-    };
-    (interior, false)
-}
-
-/// Whether these delimiters can go without changing what the markup renders.
-///
-/// JSX drops a run of whitespace that contains a newline and keeps one that
-/// does not, and an expression container splits the text around it. So only
-/// two positions are safe: alone on its line, where the whitespace either side
-/// already carries a newline and is dropped regardless; and pressed between two
-/// non-blank characters, where removing the container just joins them.
-///
-/// Anywhere else the delimiters are holding a rendered space apart —
-/// `Signed in as {…}` at a line end, `{…} and counting` at a line start,
-/// `A{…} {…}B` around a space — and they stay, empty, as they were before.
-pub(crate) fn takes_delimiters(source: &str, span: Span) -> bool {
-    let line_start = source[..span.start_byte].rfind('\n').map_or(0, |i| i + 1);
-    let line_end = source[span.end_byte..]
-        .find('\n')
-        .map_or(source.len(), |i| span.end_byte + i);
-    if source[line_start..span.start_byte].trim().is_empty()
-        && source[span.end_byte..line_end].trim().is_empty()
-    {
-        return true;
-    }
-    let before = source[..span.start_byte].chars().next_back();
-    let after = source[span.end_byte..].chars().next();
-    matches!((before, after), (Some(b), Some(a)) if !b.is_whitespace() && !a.is_whitespace())
-}
-
 /// One cut to make, and whether it takes delimiters with it. `strip` knows
 /// which it is, so nothing downstream has to work it out from the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,8 +26,9 @@ impl Removal {
         }
     }
 
-    /// A cut over syntax that exists only to hold comments, so it may take the
-    /// delimiters too — where [`takes_delimiters`] says that is invisible.
+    /// A cut over syntax that exists only to hold comments, which takes the
+    /// delimiters with it. Whether that is invisible is settled before the cut
+    /// is built, by the language that knows what the delimiters mean.
     pub(crate) fn wrapping(span: Span) -> Removal {
         Removal {
             span,
@@ -98,7 +58,7 @@ pub(crate) fn coalesce_same_line(source: &str, spans: &[Removal]) -> Vec<Removal
     out
 }
 
-pub(crate) fn separator_needed(left: &str, right: &str) -> bool {
+fn separator_needed(left: &str, right: &str) -> bool {
     fn is_word(c: char) -> bool {
         c.is_alphanumeric() || c == '_'
     }
@@ -123,7 +83,7 @@ pub(crate) fn rewrite(source: &str, remove: &[Removal], mode: LineMode) -> Strin
     let mut cursor = 0usize;
 
     for removal in remove {
-        let (c, delimited) = narrow_to_interior(source, *removal);
+        let (c, delimited) = (removal.span, removal.delimited);
         if c.start_byte < cursor {
             continue;
         }
