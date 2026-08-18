@@ -72,11 +72,11 @@ pub struct Options {
 
 /// A span of source: bytes for slicing, 1-based rows for scoping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Span {
-    pub start_byte: usize,
-    pub end_byte: usize,
-    pub start_row: usize,
-    pub end_row: usize,
+pub(crate) struct Span {
+    pub(crate) start_byte: usize,
+    pub(crate) end_byte: usize,
+    pub(crate) start_row: usize,
+    pub(crate) end_row: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,7 +90,7 @@ pub struct Comment {
     /// Syntax that holds nothing but comments, and so has no reason to outlive
     /// them — currently the `{ }` of a JSX expression. Shared with any sibling
     /// comment under the same braces, because it survives if any of them does.
-    pub enclosed_by: Option<Span>,
+    pub(crate) enclosed_by: Option<Span>,
 }
 
 impl Comment {
@@ -195,6 +195,10 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
 /// goes, which is a question [`strip`] answers, not this one; a node holding
 /// anything else (`{/* note */ value}`) keeps its delimiters.
 ///
+/// Position decides as much as kind: in `<Foo bar={/* c */} />` the braces are
+/// the attribute's value rather than packaging around a comment, and `bar=`
+/// alone does not parse.
+///
 /// Those delimiters must really be there: on a malformed or partial parse the
 /// node can run to the end of the file, and widening onto that would eat code.
 fn comment_only_wrapper<'a>(
@@ -208,6 +212,9 @@ fn comment_only_wrapper<'a>(
     }
     let parent = node.parent()?;
     if !kinds.contains(&parent.kind()) {
+        return None;
+    }
+    if parent.parent().is_some_and(|g| g.kind() == "jsx_attribute") {
         return None;
     }
     let text = source.get(parent.start_byte()..parent.end_byte())?;
@@ -302,7 +309,7 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
         .filter_map(|(c, _)| c.enclosed_by)
         .collect();
 
-    let spans: Vec<Span> = comments
+    let mut spans: Vec<Span> = comments
         .iter()
         .zip(&removing)
         .filter(|(_, &r)| r)
@@ -312,6 +319,7 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
                 .unwrap_or_else(|| c.span())
         })
         .collect();
+    spans.dedup();
 
     let spans = coalesce_same_line(source, &spans);
     let output = rewrite(source, &spans, opts.line_mode);
@@ -326,21 +334,27 @@ fn coalesce_same_line(source: &str, spans: &[Span]) -> Vec<Span> {
     let mut out: Vec<Span> = Vec::with_capacity(spans.len());
     for &c in spans {
         if let Some(last) = out.last_mut() {
-            if c.start_byte < last.end_byte {
-                last.end_byte = last.end_byte.max(c.end_byte);
-                last.end_row = last.end_row.max(c.end_row);
-                continue;
-            }
-            let gap = &source[last.end_byte..c.start_byte];
-            if gap.bytes().all(|b| b == b' ' || b == b'\t') {
-                last.end_byte = c.end_byte;
-                last.end_row = c.end_row;
-                continue;
+            if c.start_byte >= last.end_byte {
+                let gap = &source[last.end_byte..c.start_byte];
+                if gap.bytes().all(|b| b == b' ' || b == b'\t') {
+                    last.end_byte = c.end_byte;
+                    last.end_row = c.end_row;
+                    continue;
+                }
             }
         }
         out.push(c);
     }
     out
+}
+
+/// Whether the removed text was delimited syntax rather than a bare comment.
+/// Its delimiters already separated the neighbours, so putting a space back in
+/// their place would change what the markup renders: `Hello{/* hi */}World` is
+/// one word. A comment never opens with a delimiter, so the text says which
+/// case this is.
+fn was_delimited(removed: &str) -> bool {
+    removed.starts_with('{')
 }
 
 fn separator_needed(left: &str, right: &str) -> bool {
@@ -412,7 +426,9 @@ fn rewrite(source: &str, remove: &[Span], mode: LineMode) -> String {
                 if line_end > c.end_byte && bytes[line_end - 1] == b'\r' {
                     cursor = line_end - 1;
                 }
-            } else if separator_needed(&result, &source[cursor..]) {
+            } else if !was_delimited(&source[c.start_byte..c.end_byte])
+                && separator_needed(&result, &source[cursor..])
+            {
                 result.push(' ');
             }
         }
@@ -835,6 +851,30 @@ mod tests {
         assert_eq!(
             strip_default(block, Lang::Tsx)?,
             "<div>\n  <Card />\n</div>\n"
+        );
+        Ok(())
+    }
+
+    /// The braces already separated their neighbours, so putting a space where
+    /// they were changes what the markup renders.
+    #[test]
+    fn removing_braces_does_not_space_out_what_they_separated() -> TestResult {
+        let src = "export const T = () => <p>Hello{/* greeting */}World</p>;\n";
+        assert_eq!(
+            strip_default(src, Lang::Tsx)?,
+            "export const T = () => <p>HelloWorld</p>;\n"
+        );
+        Ok(())
+    }
+
+    /// An attribute's value is not packaging around a comment: `bar=` alone
+    /// does not parse.
+    #[test]
+    fn an_attribute_keeps_its_braces() -> TestResult {
+        let src = "const a = <Foo bar={/* c */} />;\n";
+        assert_eq!(
+            strip_default(src, Lang::Tsx)?,
+            "const a = <Foo bar={} />;\n"
         );
         Ok(())
     }
