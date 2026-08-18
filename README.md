@@ -117,8 +117,9 @@ is still a TODO. A pattern written in lower case matches any casing (`noop`
 covers `NOOP`); one written with a capital must match as written, so `HACK`
 stays a marker while `// half-baked hack.` stays prose.
 
-In JSX, a `{/* … */}` that holds nothing but the comment loses its braces too —
-a bare `{}` left in the markup is worse than the comment was.
+In JSX, braces holding nothing but comments go when the last of those comments
+goes — a bare `{}` left in the markup is worse than the comment was. One
+survivor keeps them, since it still has to live somewhere.
 
 `.silence.toml` (searched cwd → git root → `~/.config/.silence.toml`):
 

@@ -167,7 +167,8 @@ impl PreserveConfig {
     /// The per-comment half of the rule. Machine markers also need the rest of
     /// the file to decide, so [`crate::strip`] is the complete entry point.
     ///
-    /// A lower-case literal matches any casing; see [`Literal`].
+    /// A literal written in lower case matches any casing; one written with a
+    /// capital must match as written.
     #[must_use]
     pub fn should_preserve(&self, comment_text: &str) -> bool {
         let trimmed = comment_text.trim();

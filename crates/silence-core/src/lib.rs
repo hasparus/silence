@@ -1,4 +1,5 @@
 use silence_langs::Lang;
+use std::collections::HashSet;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
 mod preserve;
@@ -86,10 +87,10 @@ pub struct Comment {
     pub end_row: usize,
     pub text: String,
     pub kind: CommentKind,
-    /// Syntax that exists only to carry this comment and so is deleted with it
-    /// — currently the `{ }` of a JSX expression. The comment's own span still
-    /// says where the comment is; this says what removing it costs.
-    pub encloses: Option<Span>,
+    /// Syntax that holds nothing but comments, and so has no reason to outlive
+    /// them — currently the `{ }` of a JSX expression. Shared with any sibling
+    /// comment under the same braces, because it survives if any of them does.
+    pub enclosed_by: Option<Span>,
 }
 
 impl Comment {
@@ -98,19 +99,21 @@ impl Comment {
         self.end_row > self.start_row
     }
 
+    fn span(&self) -> Span {
+        Span {
+            start_byte: self.start_byte,
+            end_byte: self.end_byte,
+            start_row: self.start_row,
+            end_row: self.end_row,
+        }
+    }
+
     /// What a strip actually cuts out. Scoping and preservation read the
     /// comment's own span, so they never see the wider one.
-    fn removal(&self) -> Comment {
-        match self.encloses {
-            Some(s) => Comment {
-                start_byte: s.start_byte,
-                end_byte: s.end_byte,
-                start_row: s.start_row,
-                end_row: s.end_row,
-                ..self.clone()
-            },
-            None => self.clone(),
-        }
+    fn removal(&self, emptied: &HashSet<usize>) -> Span {
+        self.enclosed_by
+            .filter(|w| emptied.contains(&w.start_byte))
+            .unwrap_or_else(|| self.span())
     }
 }
 
@@ -179,7 +182,7 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
                 end_row: end.row + 1,
                 text,
                 kind,
-                encloses: jsx_wrapper(node, source, start_byte, end_byte).map(|w| Span {
+                enclosed_by: jsx_wrapper(node, source).map(|w| Span {
                     start_byte: w.start_byte(),
                     end_byte: w.end_byte(),
                     start_row: w.start_position().row + 1,
@@ -195,23 +198,28 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
     Ok(out)
 }
 
-/// The `{ … }` of a JSX expression that exists only to carry this comment.
-/// Removing the comment alone would leave a bare `{}` behind in the markup, so
-/// the braces are part of the comment's span. An expression holding anything
-/// else — a second comment, an expression — keeps them.
-fn jsx_wrapper<'a>(
-    node: tree_sitter::Node<'a>,
-    source: &str,
-    start_byte: usize,
-    end_byte: usize,
-) -> Option<tree_sitter::Node<'a>> {
+/// The `{ … }` of a JSX expression holding nothing but comments. Removing the
+/// comments alone would leave a bare `{}` behind in the markup, so the braces
+/// go too — but only once every comment under them is going, which is a
+/// question [`strip`] answers, not this one. An expression holding anything
+/// else (`{/* note */ value}`) keeps its braces.
+///
+/// The braces must really be there: on a malformed or partial parse the node
+/// can run to the end of the file, and widening onto that would eat code.
+fn jsx_wrapper<'a>(node: tree_sitter::Node<'a>, source: &str) -> Option<tree_sitter::Node<'a>> {
     let parent = node.parent()?;
     if parent.kind() != "jsx_expression" {
         return None;
     }
-    let before = source.get(parent.start_byte() + 1..start_byte)?;
-    let after = source.get(end_byte..parent.end_byte().checked_sub(1)?)?;
-    (before.trim().is_empty() && after.trim().is_empty()).then_some(parent)
+    let text = source.get(parent.start_byte()..parent.end_byte())?;
+    if !text.starts_with('{') || !text.ends_with('}') || text.len() < 2 {
+        return None;
+    }
+    let mut cursor = parent.walk();
+    let only_comments = parent
+        .children(&mut cursor)
+        .all(|child| matches!(child.kind(), "{" | "}" | "comment"));
+    only_comments.then_some(parent)
 }
 
 /// Re-parse injected sub-language regions (e.g. Astro frontmatter as TypeScript)
@@ -235,7 +243,7 @@ fn collect_injected<'a>(
                 c.end_byte += byte_off;
                 c.start_row += row_off;
                 c.end_row += row_off;
-                if let Some(s) = &mut c.encloses {
+                if let Some(s) = &mut c.enclosed_by {
                     s.start_byte += byte_off;
                     s.end_byte += byte_off;
                     s.start_row += row_off;
@@ -274,7 +282,7 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
     let comments = find_comments(source, lang)?;
     let preserve = opts.preserve.for_file(&comments);
 
-    let mut to_remove: Vec<Comment> = Vec::new();
+    let mut to_remove: Vec<&Comment> = Vec::new();
     let mut preserved = 0usize;
     for c in &comments {
         if !in_lines(c, &opts.lines) {
@@ -287,11 +295,16 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
             preserved += 1;
             continue;
         }
-        to_remove.push(c.removal());
+        to_remove.push(c);
     }
 
     let removed = to_remove.len();
-    let spans = coalesce_same_line(source, &to_remove);
+    let emptied = emptied_wrappers(&comments, &to_remove);
+    let spans: Vec<Span> = to_remove
+        .iter()
+        .map(|c| c.removal(&emptied))
+        .collect::<Vec<_>>();
+    let spans = coalesce_same_line(source, &spans);
     let output = rewrite(source, &spans, opts.line_mode);
     Ok(Outcome {
         output,
@@ -300,22 +313,37 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
     })
 }
 
-fn coalesce_same_line(source: &str, comments: &[Comment]) -> Vec<Comment> {
-    let mut out: Vec<Comment> = Vec::with_capacity(comments.len());
+/// Wrappers whose every comment is being removed, by the wrapper's start byte.
+/// A `{ }` is only the comments' to take when none of them is staying behind.
+fn emptied_wrappers(comments: &[Comment], to_remove: &[&Comment]) -> HashSet<usize> {
+    let mut staying: HashSet<usize> = HashSet::new();
+    let mut all: HashSet<usize> = HashSet::new();
+    let removing: HashSet<usize> = to_remove.iter().map(|c| c.start_byte).collect();
     for c in comments {
+        if let Some(w) = c.enclosed_by {
+            all.insert(w.start_byte);
+            if !removing.contains(&c.start_byte) {
+                staying.insert(w.start_byte);
+            }
+        }
+    }
+    all.difference(&staying).copied().collect()
+}
+
+fn coalesce_same_line(source: &str, spans: &[Span]) -> Vec<Span> {
+    let mut out: Vec<Span> = Vec::with_capacity(spans.len());
+    for &c in spans {
         if let Some(last) = out.last_mut() {
             if c.start_byte >= last.end_byte {
                 let gap = &source[last.end_byte..c.start_byte];
                 if gap.bytes().all(|b| b == b' ' || b == b'\t') {
                     last.end_byte = c.end_byte;
                     last.end_row = c.end_row;
-                    last.text.push_str(gap);
-                    last.text.push_str(&c.text);
                     continue;
                 }
             }
         }
-        out.push(c.clone());
+        out.push(c);
     }
     out
 }
@@ -330,7 +358,7 @@ fn separator_needed(left: &str, right: &str) -> bool {
     )
 }
 
-fn rewrite(source: &str, remove: &[Comment], mode: LineMode) -> String {
+fn rewrite(source: &str, remove: &[Span], mode: LineMode) -> String {
     if remove.is_empty() {
         return source.to_string();
     }
@@ -795,6 +823,36 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(strip(src, Lang::Tsx, &opts)?.output, src);
+        Ok(())
+    }
+
+    /// Braces holding two comments are emptied by removing both, so they go
+    /// the same way one comment's braces do.
+    #[test]
+    fn braces_go_when_the_last_comment_under_them_goes() -> TestResult {
+        let inline = "const x = <div>{/* a */ /* b */}</div>;\n";
+        assert_eq!(
+            strip_default(inline, Lang::Tsx)?,
+            "const x = <div></div>;\n"
+        );
+
+        let block = "<div>\n  {\n    /* a */\n    /* b */\n  }\n  <Card />\n</div>\n";
+        assert_eq!(
+            strip_default(block, Lang::Tsx)?,
+            "<div>\n  <Card />\n</div>\n"
+        );
+        Ok(())
+    }
+
+    /// One survivor is reason enough to keep the braces: they still have to
+    /// hold it.
+    #[test]
+    fn braces_stay_when_a_sibling_comment_survives() -> TestResult {
+        let src = "const x = <div>{/* slop */ /* codegen-start a */}{/* codegen-end a */}</div>;\n";
+        assert_eq!(
+            strip_default(src, Lang::Tsx)?,
+            "const x = <div>{ /* codegen-start a */}{/* codegen-end a */}</div>;\n"
+        );
         Ok(())
     }
 
