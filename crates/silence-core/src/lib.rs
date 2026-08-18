@@ -69,6 +69,15 @@ pub struct Options {
     pub kinds: CommentKinds,
 }
 
+/// A span of source: bytes for slicing, 1-based rows for scoping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_row: usize,
+    pub end_row: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Comment {
     pub start_byte: usize,
@@ -77,12 +86,31 @@ pub struct Comment {
     pub end_row: usize,
     pub text: String,
     pub kind: CommentKind,
+    /// Syntax that exists only to carry this comment and so is deleted with it
+    /// — currently the `{ }` of a JSX expression. The comment's own span still
+    /// says where the comment is; this says what removing it costs.
+    pub encloses: Option<Span>,
 }
 
 impl Comment {
     #[must_use]
     pub fn is_multiline(&self) -> bool {
         self.end_row > self.start_row
+    }
+
+    /// What a strip actually cuts out. Scoping and preservation read the
+    /// comment's own span, so they never see the wider one.
+    fn removal(&self) -> Comment {
+        match self.encloses {
+            Some(s) => Comment {
+                start_byte: s.start_byte,
+                end_byte: s.end_byte,
+                start_row: s.start_row,
+                end_row: s.end_row,
+                ..self.clone()
+            },
+            None => self.clone(),
+        }
     }
 }
 
@@ -144,17 +172,6 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
                 _ => continue,
             };
 
-            let (start_byte, end_byte, start, end) =
-                match jsx_wrapper(node, source, start_byte, end_byte) {
-                    Some(w) => (
-                        w.start_byte(),
-                        w.end_byte(),
-                        w.start_position(),
-                        w.end_position(),
-                    ),
-                    None => (start_byte, end_byte, start, end),
-                };
-
             out.push(Comment {
                 start_byte,
                 end_byte,
@@ -162,6 +179,12 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
                 end_row: end.row + 1,
                 text,
                 kind,
+                encloses: jsx_wrapper(node, source, start_byte, end_byte).map(|w| Span {
+                    start_byte: w.start_byte(),
+                    end_byte: w.end_byte(),
+                    start_row: w.start_position().row + 1,
+                    end_row: w.end_position().row + 1,
+                }),
             });
         }
     }
@@ -212,6 +235,12 @@ fn collect_injected<'a>(
                 c.end_byte += byte_off;
                 c.start_row += row_off;
                 c.end_row += row_off;
+                if let Some(s) = &mut c.encloses {
+                    s.start_byte += byte_off;
+                    s.end_byte += byte_off;
+                    s.start_row += row_off;
+                    s.end_row += row_off;
+                }
                 out.push(c);
             }
             continue;
@@ -245,7 +274,7 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
     let comments = find_comments(source, lang)?;
     let preserve = opts.preserve.for_file(&comments);
 
-    let mut to_remove: Vec<&Comment> = Vec::new();
+    let mut to_remove: Vec<Comment> = Vec::new();
     let mut preserved = 0usize;
     for c in &comments {
         if !in_lines(c, &opts.lines) {
@@ -258,7 +287,7 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
             preserved += 1;
             continue;
         }
-        to_remove.push(c);
+        to_remove.push(c.removal());
     }
 
     let removed = to_remove.len();
@@ -271,9 +300,9 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
     })
 }
 
-fn coalesce_same_line(source: &str, comments: &[&Comment]) -> Vec<Comment> {
+fn coalesce_same_line(source: &str, comments: &[Comment]) -> Vec<Comment> {
     let mut out: Vec<Comment> = Vec::with_capacity(comments.len());
-    for &c in comments {
+    for c in comments {
         if let Some(last) = out.last_mut() {
             if c.start_byte >= last.end_byte {
                 let gap = &source[last.end_byte..c.start_byte];
@@ -752,6 +781,20 @@ mod tests {
             strip_default(src, Lang::Tsx)?,
             "<div>\n  <Card />\n</div>\n"
         );
+        Ok(())
+    }
+
+    /// The braces are wider than the comment, so scoping must still read the
+    /// comment's own rows: a line range covering only the `{` is not a range
+    /// covering the comment under it.
+    #[test]
+    fn jsx_braces_do_not_pull_a_comment_into_scope() -> TestResult {
+        let src = "<div>\n  {\n    /* hand-written, do not delete */\n  }\n  <Card />\n</div>\n";
+        let opts = Options {
+            lines: Lines::Ranges(vec![(2, 2)]),
+            ..Default::default()
+        };
+        assert_eq!(strip(src, Lang::Tsx, &opts)?.output, src);
         Ok(())
     }
 

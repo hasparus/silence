@@ -111,8 +111,11 @@ subject to the pairing requirement. A file holding both `// week-start` and
 
 Patterns match anywhere in a comment but only as whole words, so `noop` keeps
 `// noop` without keeping `// snoop on the socket`. A trailing `s` is the same
-word (`TODOs`), and a pattern's punctuated ends are unconstrained (`#region`,
-`biome-`).
+word (`TODOs`), a pattern's punctuated ends are unconstrained (`#region`,
+`biome-`), and only an ASCII neighbour can continue a word — `// TODO修复这个`
+is still a TODO. A pattern written in lower case matches any casing (`noop`
+covers `NOOP`); one written with a capital must match as written, so `HACK`
+stays a marker while `// half-baked hack.` stays prose.
 
 In JSX, a `{/* … */}` that holds nothing but the comment loses its braces too —
 a bare `{}` left in the markup is worse than the comment was.
