@@ -71,7 +71,7 @@ pub struct Options {
 }
 
 /// A span of source: bytes for slicing, 1-based rows for scoping.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start_byte: usize,
     pub end_byte: usize,
@@ -106,14 +106,6 @@ impl Comment {
             start_row: self.start_row,
             end_row: self.end_row,
         }
-    }
-
-    /// What a strip actually cuts out. Scoping and preservation read the
-    /// comment's own span, so they never see the wider one.
-    fn removal(&self, emptied: &HashSet<usize>) -> Span {
-        self.enclosed_by
-            .filter(|w| emptied.contains(&w.start_byte))
-            .unwrap_or_else(|| self.span())
     }
 }
 
@@ -182,7 +174,7 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
                 end_row: end.row + 1,
                 text,
                 kind,
-                enclosed_by: jsx_wrapper(node, source).map(|w| Span {
+                enclosed_by: comment_only_wrapper(node, source, lang).map(|w| Span {
                     start_byte: w.start_byte(),
                     end_byte: w.end_byte(),
                     start_row: w.start_position().row + 1,
@@ -198,21 +190,28 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
     Ok(out)
 }
 
-/// The `{ … }` of a JSX expression holding nothing but comments. Removing the
-/// comments alone would leave a bare `{}` behind in the markup, so the braces
-/// go too — but only once every comment under them is going, which is a
-/// question [`strip`] answers, not this one. An expression holding anything
-/// else (`{/* note */ value}`) keeps its braces.
+/// The delimited node holding this comment and nothing but comments — see
+/// [`Lang::comment_only_wrappers`]. It goes when the last comment under it
+/// goes, which is a question [`strip`] answers, not this one; a node holding
+/// anything else (`{/* note */ value}`) keeps its delimiters.
 ///
-/// The braces must really be there: on a malformed or partial parse the node
-/// can run to the end of the file, and widening onto that would eat code.
-fn jsx_wrapper<'a>(node: tree_sitter::Node<'a>, source: &str) -> Option<tree_sitter::Node<'a>> {
+/// Those delimiters must really be there: on a malformed or partial parse the
+/// node can run to the end of the file, and widening onto that would eat code.
+fn comment_only_wrapper<'a>(
+    node: tree_sitter::Node<'a>,
+    source: &str,
+    lang: Lang,
+) -> Option<tree_sitter::Node<'a>> {
+    let kinds = lang.comment_only_wrappers();
+    if kinds.is_empty() {
+        return None;
+    }
     let parent = node.parent()?;
-    if parent.kind() != "jsx_expression" {
+    if !kinds.contains(&parent.kind()) {
         return None;
     }
     let text = source.get(parent.start_byte()..parent.end_byte())?;
-    if !text.starts_with('{') || !text.ends_with('}') || text.len() < 2 {
+    if !text.starts_with('{') || !text.ends_with('}') {
         return None;
     }
     let mut cursor = parent.walk();
@@ -282,28 +281,38 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
     let comments = find_comments(source, lang)?;
     let preserve = opts.preserve.for_file(&comments);
 
-    let mut to_remove: Vec<&Comment> = Vec::new();
+    let mut removing = vec![false; comments.len()];
     let mut preserved = 0usize;
-    for c in &comments {
-        if !in_lines(c, &opts.lines) {
-            continue;
-        }
-        if !opts.kinds.allows(c.kind) {
+    for (i, c) in comments.iter().enumerate() {
+        if !in_lines(c, &opts.lines) || !opts.kinds.allows(c.kind) {
             continue;
         }
         if preserve.should_preserve(c) {
             preserved += 1;
             continue;
         }
-        to_remove.push(c);
+        removing[i] = true;
     }
+    let removed = removing.iter().filter(|&&r| r).count();
 
-    let removed = to_remove.len();
-    let emptied = emptied_wrappers(&comments, &to_remove);
-    let spans: Vec<Span> = to_remove
+    let survivors: HashSet<Span> = comments
         .iter()
-        .map(|c| c.removal(&emptied))
-        .collect::<Vec<_>>();
+        .zip(&removing)
+        .filter(|(_, &r)| !r)
+        .filter_map(|(c, _)| c.enclosed_by)
+        .collect();
+
+    let spans: Vec<Span> = comments
+        .iter()
+        .zip(&removing)
+        .filter(|(_, &r)| r)
+        .map(|(c, _)| {
+            c.enclosed_by
+                .filter(|w| !survivors.contains(w))
+                .unwrap_or_else(|| c.span())
+        })
+        .collect();
+
     let spans = coalesce_same_line(source, &spans);
     let output = rewrite(source, &spans, opts.line_mode);
     Ok(Outcome {
@@ -313,34 +322,20 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
     })
 }
 
-/// Wrappers whose every comment is being removed, by the wrapper's start byte.
-/// A `{ }` is only the comments' to take when none of them is staying behind.
-fn emptied_wrappers(comments: &[Comment], to_remove: &[&Comment]) -> HashSet<usize> {
-    let mut staying: HashSet<usize> = HashSet::new();
-    let mut all: HashSet<usize> = HashSet::new();
-    let removing: HashSet<usize> = to_remove.iter().map(|c| c.start_byte).collect();
-    for c in comments {
-        if let Some(w) = c.enclosed_by {
-            all.insert(w.start_byte);
-            if !removing.contains(&c.start_byte) {
-                staying.insert(w.start_byte);
-            }
-        }
-    }
-    all.difference(&staying).copied().collect()
-}
-
 fn coalesce_same_line(source: &str, spans: &[Span]) -> Vec<Span> {
     let mut out: Vec<Span> = Vec::with_capacity(spans.len());
     for &c in spans {
         if let Some(last) = out.last_mut() {
-            if c.start_byte >= last.end_byte {
-                let gap = &source[last.end_byte..c.start_byte];
-                if gap.bytes().all(|b| b == b' ' || b == b'\t') {
-                    last.end_byte = c.end_byte;
-                    last.end_row = c.end_row;
-                    continue;
-                }
+            if c.start_byte < last.end_byte {
+                last.end_byte = last.end_byte.max(c.end_byte);
+                last.end_row = last.end_row.max(c.end_row);
+                continue;
+            }
+            let gap = &source[last.end_byte..c.start_byte];
+            if gap.bytes().all(|b| b == b' ' || b == b'\t') {
+                last.end_byte = c.end_byte;
+                last.end_row = c.end_row;
+                continue;
             }
         }
         out.push(c);
@@ -841,6 +836,17 @@ mod tests {
             strip_default(block, Lang::Tsx)?,
             "<div>\n  <Card />\n</div>\n"
         );
+        Ok(())
+    }
+
+    /// Two comments under one wrapper name the same span to remove, and a
+    /// duplicate span used to swallow whatever removal came after it.
+    #[test]
+    fn a_shared_wrapper_does_not_swallow_the_next_removal() -> TestResult {
+        let src = "const x = <div>{/* a */ /* b */}{/* c */}</div>;\n";
+        let out = strip(src, Lang::Tsx, &Options::default())?;
+        assert_eq!(out.output, "const x = <div></div>;\n");
+        assert_eq!(out.removed, 3);
         Ok(())
     }
 
