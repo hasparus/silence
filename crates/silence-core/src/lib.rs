@@ -79,7 +79,10 @@ pub(crate) struct Span {
     pub(crate) end_row: usize,
 }
 
+/// Constructed only by [`find_comments`]: it carries a crate-private note on
+/// enclosing syntax, so it cannot be built field by field from outside.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Comment {
     pub start_byte: usize,
     pub end_byte: usize,
@@ -309,15 +312,22 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
         .filter_map(|(c, _)| c.enclosed_by)
         .collect();
 
-    let mut spans: Vec<Span> = comments
+    let mut spans: Vec<Removal> = comments
         .iter()
         .zip(&removing)
         .filter(|(_, &r)| r)
-        .map(|(c, _)| {
-            c.enclosed_by
-                .filter(|w| !survivors.contains(w))
-                .unwrap_or_else(|| c.span())
-        })
+        .map(
+            |(c, _)| match c.enclosed_by.filter(|w| !survivors.contains(w)) {
+                Some(wrapper) => Removal {
+                    span: wrapper,
+                    delimited: true,
+                },
+                None => Removal {
+                    span: c.span(),
+                    delimited: false,
+                },
+            },
+        )
         .collect();
     spans.dedup();
 
@@ -330,15 +340,33 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
     })
 }
 
-fn coalesce_same_line(source: &str, spans: &[Span]) -> Vec<Span> {
-    let mut out: Vec<Span> = Vec::with_capacity(spans.len());
+/// One cut to make, and whether it takes delimiters with it. `strip` knows
+/// which it is, so nothing downstream has to work it out from the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Removal {
+    span: Span,
+    delimited: bool,
+}
+
+/// Runs of removals separated by nothing but padding, merged so the line they
+/// sit on is judged once.
+///
+/// Padding between two comments is the caller's to take. Between two sets of
+/// delimiters it is content — `A{/* a */} {/* b */}B` renders `A B` — so it is
+/// only merged away when the whole line is going anyway.
+fn coalesce_same_line(source: &str, spans: &[Removal]) -> Vec<Removal> {
+    let mut out: Vec<Removal> = Vec::with_capacity(spans.len());
     for &c in spans {
         if let Some(last) = out.last_mut() {
-            if c.start_byte >= last.end_byte {
-                let gap = &source[last.end_byte..c.start_byte];
-                if gap.bytes().all(|b| b == b' ' || b == b'\t') {
-                    last.end_byte = c.end_byte;
-                    last.end_row = c.end_row;
+            if c.span.start_byte >= last.span.end_byte {
+                let gap = &source[last.span.end_byte..c.span.start_byte];
+                let padding = gap.bytes().all(|b| b == b' ' || b == b'\t');
+                let keeps_content =
+                    (last.delimited || c.delimited) && !alone_on_line(source, last.span, c.span);
+                if padding && !keeps_content {
+                    last.span.end_byte = c.span.end_byte;
+                    last.span.end_row = c.span.end_row;
+                    last.delimited |= c.delimited;
                     continue;
                 }
             }
@@ -348,13 +376,15 @@ fn coalesce_same_line(source: &str, spans: &[Span]) -> Vec<Span> {
     out
 }
 
-/// Whether the removed text was delimited syntax rather than a bare comment.
-/// Its delimiters already separated the neighbours, so putting a space back in
-/// their place would change what the markup renders: `Hello{/* hi */}World` is
-/// one word. A comment never opens with a delimiter, so the text says which
-/// case this is.
-fn was_delimited(removed: &str) -> bool {
-    removed.starts_with('{')
+/// Whether nothing but whitespace shares the line with these two spans, in
+/// which case the line goes whole and what lay between them goes with it.
+fn alone_on_line(source: &str, first: Span, last: Span) -> bool {
+    let line_start = source[..first.start_byte].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = source[last.end_byte..]
+        .find('\n')
+        .map_or(source.len(), |i| last.end_byte + i);
+    source[line_start..first.start_byte].trim().is_empty()
+        && source[last.end_byte..line_end].trim().is_empty()
 }
 
 fn separator_needed(left: &str, right: &str) -> bool {
@@ -367,7 +397,7 @@ fn separator_needed(left: &str, right: &str) -> bool {
     )
 }
 
-fn rewrite(source: &str, remove: &[Span], mode: LineMode) -> String {
+fn rewrite(source: &str, remove: &[Removal], mode: LineMode) -> String {
     if remove.is_empty() {
         return source.to_string();
     }
@@ -381,7 +411,8 @@ fn rewrite(source: &str, remove: &[Span], mode: LineMode) -> String {
     let mut result = String::with_capacity(source.len());
     let mut cursor = 0usize;
 
-    for c in remove {
+    for removal in remove {
+        let c = removal.span;
         if c.start_byte < cursor {
             continue;
         }
@@ -417,18 +448,20 @@ fn rewrite(source: &str, remove: &[Span], mode: LineMode) -> String {
                     cursor = c.end_byte;
                 }
             }
+        } else if suffix_blank {
+            let trimmed_len = result.trim_end_matches([' ', '\t']).len();
+            result.truncate(trimmed_len);
+            cursor = line_end;
+            if line_end > c.end_byte && bytes[line_end - 1] == b'\r' {
+                cursor = line_end - 1;
+            }
+        } else if removal.delimited {
+            cursor = c.end_byte;
         } else {
             let trimmed_len = result.trim_end_matches([' ', '\t']).len();
             result.truncate(trimmed_len);
             cursor = c.end_byte;
-            if suffix_blank {
-                cursor = line_end;
-                if line_end > c.end_byte && bytes[line_end - 1] == b'\r' {
-                    cursor = line_end - 1;
-                }
-            } else if !was_delimited(&source[c.start_byte..c.end_byte])
-                && separator_needed(&result, &source[cursor..])
-            {
+            if separator_needed(&result, &source[cursor..]) {
                 result.push(' ');
             }
         }
@@ -852,6 +885,35 @@ mod tests {
             strip_default(block, Lang::Tsx)?,
             "<div>\n  <Card />\n</div>\n"
         );
+        Ok(())
+    }
+
+    /// The text around the braces is content the author wrote. Taking the
+    /// braces must not take the space in front of them with it.
+    #[test]
+    fn removing_braces_keeps_the_text_beside_them() -> TestResult {
+        let src = "const C = () => <p>\n  Signed in as {/* display name */}<b>{name}</b>.\n</p>;\n";
+        assert_eq!(
+            strip_default(src, Lang::Tsx)?,
+            "const C = () => <p>\n  Signed in as <b>{name}</b>.\n</p>;\n"
+        );
+        Ok(())
+    }
+
+    /// A space between two wrappers is a text node, not padding between
+    /// comments, so it cannot be swallowed by merging them.
+    #[test]
+    fn a_space_between_two_wrappers_is_content() -> TestResult {
+        let src = "const y = <p>A{/* a */} {/* b */}B</p>;\n";
+        assert_eq!(strip_default(src, Lang::Tsx)?, "const y = <p>A B</p>;\n");
+        Ok(())
+    }
+
+    /// When the whole line is going, what lay between the wrappers goes too.
+    #[test]
+    fn wrappers_alone_on_a_line_take_the_line() -> TestResult {
+        let src = "<Row>\n  {/* left */ /* icon */} {/* right */}\n</Row>\n";
+        assert_eq!(strip_default(src, Lang::Tsx)?, "<Row>\n</Row>\n");
         Ok(())
     }
 
