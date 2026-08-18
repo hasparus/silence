@@ -243,32 +243,31 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
     let comments = find_comments(source, lang)?;
     let preserve = opts.preserve.for_file(&comments);
 
-    let mut removing = vec![false; comments.len()];
+    let mut going: Vec<&Comment> = Vec::new();
+    let mut staying: Vec<&Comment> = Vec::new();
     let mut preserved = 0usize;
-    for (i, c) in comments.iter().enumerate() {
+    for c in &comments {
         if !in_lines(c, &opts.lines) || !opts.kinds.allows(c.kind) {
+            staying.push(c);
             continue;
         }
         if preserve.should_preserve(c) {
             preserved += 1;
+            staying.push(c);
             continue;
         }
-        removing[i] = true;
+        going.push(c);
     }
-    let removed = removing.iter().filter(|&&r| r).count();
+    let removed = going.len();
 
-    let takeable = takeable_containers(source, &comments, &removing);
+    let takeable = takeable_containers(source, &going, &staying);
 
-    let mut spans: Vec<Removal> = comments
+    let mut spans: Vec<Removal> = going
         .iter()
-        .zip(&removing)
-        .filter(|(_, &r)| r)
-        .map(
-            |(c, _)| match c.enclosed_by.filter(|w| takeable.contains(w)) {
-                Some(container) => Removal::wrapping(container.span),
-                None => Removal::bare(c.span()),
-            },
-        )
+        .map(|c| match c.enclosed_by.filter(|w| takeable.contains(w)) {
+            Some(container) => Removal::wrapping(container.span),
+            None => Removal::bare(c.span()),
+        })
         .collect();
     spans.dedup();
 
@@ -291,34 +290,27 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
 /// identity nobody relies on.
 fn takeable_containers(
     source: &str,
-    comments: &[Comment],
-    removing: &[bool],
+    going: &[&Comment],
+    staying: &[&Comment],
 ) -> HashSet<Container> {
-    let staying: HashSet<Container> = comments
-        .iter()
-        .zip(removing)
-        .filter(|(_, &r)| !r)
-        .filter_map(|(c, _)| c.enclosed_by)
-        .collect();
+    let held: HashSet<Container> = staying.iter().filter_map(|c| c.enclosed_by).collect();
 
-    let mut going: Vec<Container> = comments
+    let mut open: Vec<Container> = going
         .iter()
-        .zip(removing)
-        .filter(|(_, &r)| r)
-        .filter_map(|(c, _)| c.enclosed_by)
-        .filter(|w| !staying.contains(w))
+        .filter_map(|c| c.enclosed_by)
+        .filter(|w| !held.contains(w))
         .collect();
-    going.dedup();
+    open.dedup();
 
     let mut takeable = HashSet::new();
     let mut start = 0;
-    while start < going.len() {
+    while start < open.len() {
         let mut end = start + 1;
-        while end < going.len() && going[end - 1].adjoins(going[end]) {
+        while end < open.len() && open[end - 1].adjoins(open[end]) {
             end += 1;
         }
-        if jsx::taking_braces_is_invisible(source, &going[start..end]) {
-            takeable.extend(&going[start..end]);
+        if jsx::taking_braces_is_invisible(source, &open[start..end]) {
+            takeable.extend(&open[start..end]);
         }
         start = end;
     }

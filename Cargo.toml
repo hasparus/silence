@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/hasparus/silence"
@@ -53,9 +53,9 @@ globset = "0.4"
 anyhow = "1"
 thiserror = "2"
 
-silence-strip-core = { path = "crates/silence-core", version = "0.7.0" }
-silence-strip-langs = { path = "crates/silence-langs", version = "0.7.0" }
-silence-strip-grammars = { path = "crates/silence-grammars", version = "0.7.0", default-features = false }
+silence-strip-core = { path = "crates/silence-core", version = "0.8.0" }
+silence-strip-langs = { path = "crates/silence-langs", version = "0.8.0" }
+silence-strip-grammars = { path = "crates/silence-grammars", version = "0.8.0", default-features = false }
 
 [profile.release]
 lto = "thin"

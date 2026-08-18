@@ -84,17 +84,6 @@ impl Lang {
             _ => &[],
         }
     }
-
-    /// Node kinds whose delimiters exist only to hold comments, and so have no
-    /// reason to outlive them. JSX wraps a comment in an expression container,
-    /// so stripping `{/* … */}` without its braces leaves a bare `{}` behind.
-    #[must_use]
-    pub fn comment_only_wrappers(self) -> &'static [&'static str] {
-        match self {
-            Lang::Tsx | Lang::JavaScript => &["jsx_expression"],
-            _ => &[],
-        }
-    }
 }
 
 #[cfg(test)]

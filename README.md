@@ -118,8 +118,13 @@ covers `NOOP`); one written with a capital must match as written, so `HACK`
 stays a marker while `// half-baked hack.` stays prose.
 
 In JSX, braces holding nothing but comments go when the last of those comments
-goes — a bare `{}` left in the markup is worse than the comment was. One
-survivor keeps them, since it still has to live somewhere.
+goes *and* removing them cannot change what the markup renders — a bare `{}`
+left in the markup is worse than the comment was, but changing the rendered
+text is worse still. An expression container splits the text around it, and a
+line break renders as a space inside a run of text and as nothing at its edge,
+so the braces sometimes hold a space apart. Where they do, a `{}` stays: that
+is the tool saying it checked. A surviving comment keeps them too, since it
+still has to live somewhere.
 
 `.silence.toml` (searched cwd → git root → `~/.config/.silence.toml`):
 

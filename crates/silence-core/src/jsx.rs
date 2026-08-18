@@ -42,12 +42,11 @@ impl Container {
 /// they are a spread. Both keep their braces. The delimiters must also really
 /// be there — on a partial parse the node can run to the end of the file.
 pub(crate) fn container(node: Node, source: &str, lang: Lang) -> Option<Container> {
-    let kinds = lang.comment_only_wrappers();
-    if kinds.is_empty() {
+    if !matches!(lang, Lang::Tsx | Lang::JavaScript) {
         return None;
     }
     let parent = node.parent()?;
-    if !kinds.contains(&parent.kind()) {
+    if parent.kind() != "jsx_expression" {
         return None;
     }
     if !parent
@@ -103,8 +102,11 @@ pub(crate) fn taking_braces_is_invisible(source: &str, group: &[Container]) -> b
     if runs.iter().any(|run| !is_plain_text(run)) || spells_an_entity(&runs) {
         return false;
     }
-    let apart: String = runs.iter().copied().map(clean_text).collect();
-    clean_text(&runs.concat()) == apart
+    let joined = runs.concat();
+    READINGS.iter().all(|&reading| {
+        let apart: String = runs.iter().map(|run| clean_text(run, reading)).collect();
+        clean_text(&joined, reading) == apart
+    })
 }
 
 /// JSX's own reading of a run of text: a line's leading and trailing padding
@@ -116,21 +118,25 @@ pub(crate) fn taking_braces_is_invisible(source: &str, group: &[Container]) -> b
 /// renders as nothing. A container splits one run into two, so each break
 /// beside it sits at an edge — and joining the runs moves it inside, where it
 /// becomes a space that was never there.
-fn clean_text(text: &str) -> String {
+///
+/// What counts as padding is the one place the compilers part company, so it
+/// is a parameter rather than a guess. Babel turns tabs into spaces and trims
+/// spaces; TypeScript, esbuild and SWC trim the tab itself.
+fn clean_with(text: &str, padding: &[char]) -> String {
     let lines = split_lines(text);
     let last_non_empty = lines
         .iter()
-        .rposition(|l| l.contains(|c: char| c != ' '))
+        .rposition(|l| l.contains(|c: char| !padding.contains(&c)))
         .unwrap_or(0);
 
     let mut out = String::new();
     for (i, line) in lines.iter().enumerate() {
         let mut trimmed = *line;
         if i != 0 {
-            trimmed = trimmed.trim_start_matches(' ');
+            trimmed = trimmed.trim_start_matches(padding);
         }
         if i != lines.len() - 1 {
-            trimmed = trimmed.trim_end_matches(' ');
+            trimmed = trimmed.trim_end_matches(padding);
         }
         if !trimmed.is_empty() {
             out.push_str(trimmed);
@@ -140,6 +146,23 @@ fn clean_text(text: &str) -> String {
         }
     }
     out
+}
+
+/// The two readings a file might get compiled under. A cut has to be invisible
+/// in both, so agreeing with one of them is not enough.
+#[derive(Debug, Clone, Copy)]
+enum Reading {
+    Babel,
+    TypeScript,
+}
+
+const READINGS: [Reading; 2] = [Reading::Babel, Reading::TypeScript];
+
+fn clean_text(text: &str, reading: Reading) -> String {
+    match reading {
+        Reading::Babel => clean_with(&text.replace('\t', " "), &[' ']),
+        Reading::TypeScript => clean_with(text, &[' ', '\t']),
+    }
 }
 
 /// Every line terminator JSX honours, not just the common one: a lone `\r`
@@ -156,13 +179,13 @@ fn split_lines(text: &str) -> Vec<&str> {
     out
 }
 
-/// Text this rule is willing to reason about. Tabs are refused because Babel
-/// converts them to spaces before trimming line padding and TypeScript, esbuild
-/// and SWC do not, so a tab at a line edge renders differently depending on who
-/// compiled it. Whitespace outside ASCII is refused for the same reason.
+/// Text this rule is willing to reason about. Whitespace outside the ASCII
+/// kinds is refused: which of those count as line padding is a longer list in
+/// TypeScript than in Babel, and modelling the difference buys nothing that
+/// real files ask for.
 fn is_plain_text(run: &str) -> bool {
     !run.chars()
-        .any(|c| c.is_whitespace() && !matches!(c, ' ' | '\n' | '\r'))
+        .any(|c| c.is_whitespace() && !matches!(c, ' ' | '\t' | '\n' | '\r'))
 }
 
 /// Whether joining the runs could spell an entity that no run spells alone.
@@ -180,26 +203,29 @@ fn spells_an_entity(runs: &[&str]) -> bool {
     })
 }
 
-/// Where the run of text on either side of `container` reaches. Whitespace
-/// between two elements is not always a node of its own, so the run is read
-/// from the source between siblings rather than from a node that may not exist.
+/// Where the run of text on either side of `container` reaches. A run is not
+/// one node: whitespace between two elements sometimes has no node at all, and
+/// an entity gets one of its own, so the walk continues until markup ends it
+/// and the span is read from the source rather than from any single node.
 fn run_start(container: Node) -> usize {
-    match container.prev_sibling() {
-        Some(n) if is_markup(n) => n.end_byte(),
-        Some(n) => n.start_byte(),
-        None => container
-            .parent()
-            .map_or(container.start_byte(), |p| p.start_byte()),
+    let mut at = container;
+    loop {
+        match at.prev_sibling() {
+            Some(n) if is_markup(n) => return n.end_byte(),
+            Some(n) => at = n,
+            None => return at.parent().map_or(at.start_byte(), |p| p.start_byte()),
+        }
     }
 }
 
 fn run_end(container: Node) -> usize {
-    match container.next_sibling() {
-        Some(n) if is_markup(n) => n.start_byte(),
-        Some(n) => n.end_byte(),
-        None => container
-            .parent()
-            .map_or(container.end_byte(), |p| p.end_byte()),
+    let mut at = container;
+    loop {
+        match at.next_sibling() {
+            Some(n) if is_markup(n) => return n.start_byte(),
+            Some(n) => at = n,
+            None => return at.parent().map_or(at.end_byte(), |p| p.end_byte()),
+        }
     }
 }
 
@@ -223,12 +249,15 @@ mod tests {
 
     #[test]
     fn text_is_cleaned_the_way_jsx_reads_it() {
-        assert_eq!(clean_text("Hello"), "Hello");
-        assert_eq!(clean_text("\n    a\n  "), "a");
-        assert_eq!(clean_text("\n    "), "");
-        assert_eq!(clean_text(" "), " ");
-        assert_eq!(clean_text("\n  a\n  b\n"), "a b");
-        assert_eq!(clean_text("\n    Signed in as "), "Signed in as ");
+        assert_eq!(clean_text("Hello", Reading::Babel), "Hello");
+        assert_eq!(clean_text("\n    a\n  ", Reading::Babel), "a");
+        assert_eq!(clean_text("\n    ", Reading::Babel), "");
+        assert_eq!(clean_text(" ", Reading::Babel), " ");
+        assert_eq!(clean_text("\n  a\n  b\n", Reading::Babel), "a b");
+        assert_eq!(
+            clean_text("\n    Signed in as ", Reading::Babel),
+            "Signed in as "
+        );
     }
 
     /// A lone `\r` ends a line, so it renders as a space between two words
@@ -238,16 +267,18 @@ mod tests {
         assert_eq!(split_lines("a\r\nb"), vec!["a", "b"]);
         assert_eq!(split_lines("a\rb"), vec!["a", "b"]);
         assert_eq!(split_lines("a\nb"), vec!["a", "b"]);
-        assert_eq!(clean_text("a\rb"), "a b");
-        assert_eq!(clean_text("a\r\nb"), "a b");
+        assert_eq!(clean_text("a\rb", Reading::Babel), "a b");
+        assert_eq!(clean_text("a\r\nb", Reading::Babel), "a b");
     }
 
-    /// Compilers disagree about tabs, so text carrying one is left alone.
+    /// Compilers disagree about tabs, so a tab is read both ways rather than
+    /// refused: as indentation both erase it, at a line edge they do not.
     #[test]
-    fn tabs_are_refused_rather_than_guessed_at() {
-        assert!(!is_plain_text("\tb"));
+    fn a_tab_is_read_the_way_each_compiler_reads_it() {
+        assert_eq!(clean_text("a\tb", Reading::Babel), "a b");
+        assert_eq!(clean_text("a\tb", Reading::TypeScript), "a\tb");
+        assert!(is_plain_text("\tb"));
         assert!(!is_plain_text("a\u{a0}b"));
-        assert!(is_plain_text("a b\n c"));
     }
 
     /// A terminated entity is settled before the join; a dangling one is not.
