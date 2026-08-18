@@ -432,6 +432,55 @@ fn braces_holding_a_rendered_space_stay_empty() -> TestResult {
     Ok(())
 }
 
+/// A container that stays holds the text apart, so its neighbour cannot be
+/// judged as though both were leaving.
+#[test]
+fn a_preserved_neighbour_keeps_the_braces_beside_it() -> TestResult {
+    let first = "const T = <a>a{/* TODO x */}\n{/* y */} a</a>;\n";
+    assert_eq!(
+        strip_default(first, Lang::Tsx)?,
+        "const T = <a>a{/* TODO x */}\n{} a</a>;\n"
+    );
+
+    let second = "const T = <a>a {/* x */}\n{/* TODO y */}a</a>;\n";
+    assert_eq!(
+        strip_default(second, Lang::Tsx)?,
+        "const T = <a>a {}\n{/* TODO y */}a</a>;\n"
+    );
+    Ok(())
+}
+
+/// A lone carriage return ends a line the way a newline does.
+#[test]
+fn a_lone_carriage_return_ends_a_line() -> TestResult {
+    let src = "const T = <a>a{/* c */}\ra</a>;\n";
+    assert_eq!(strip_default(src, Lang::Tsx)?, "const T = <a>a{}\ra</a>;\n");
+    Ok(())
+}
+
+/// Babel turns a tab into a space before trimming line padding and TypeScript
+/// does not, so text carrying one is left alone rather than guessed at.
+#[test]
+fn a_tab_beside_the_braces_keeps_them() -> TestResult {
+    let src = "const T = <pre>a\n{/* c */}\tb</pre>;\n";
+    assert_eq!(
+        strip_default(src, Lang::Tsx)?,
+        "const T = <pre>a\n{}\tb</pre>;\n"
+    );
+    Ok(())
+}
+
+/// A finished entity is settled before the join, so it is no reason to stay.
+#[test]
+fn a_finished_entity_does_not_block_the_join() -> TestResult {
+    let src = "const T = <a>&nbsp;{/* c */}x</a>;\n";
+    assert_eq!(
+        strip_default(src, Lang::Tsx)?,
+        "const T = <a>&nbsp;x</a>;\n"
+    );
+    Ok(())
+}
+
 /// Between two lines of prose the newlines sit at the edge of their own runs
 /// and render as nothing; joined into one run they become a space. The braces
 /// are what keeps them apart.

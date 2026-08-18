@@ -5,6 +5,7 @@ use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 mod jsx;
 mod preserve;
 mod rewrite;
+use jsx::Container;
 pub use preserve::{PreserveConfig, DEFAULT_PRESERVE_PATTERNS};
 use rewrite::{coalesce_same_line, rewrite, Removal, Span};
 
@@ -84,10 +85,11 @@ pub struct Comment {
     pub end_row: usize,
     pub text: String,
     pub kind: CommentKind,
-    /// Syntax that holds nothing but comments, and so has no reason to outlive
-    /// them — currently the `{ }` of a JSX expression. Shared with any sibling
-    /// comment under the same braces, because it survives if any of them does.
-    pub(crate) enclosed_by: Option<Span>,
+    /// The `{ }` of a JSX expression this comment is the whole content of, and
+    /// where the text runs beside it reach. A fact about the parse, carrying no
+    /// claim that the braces may go — [`strip`] settles that once it knows
+    /// which comments are actually leaving.
+    pub(crate) enclosed_by: Option<Container>,
 }
 
 impl Comment {
@@ -171,14 +173,7 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
                 end_row: end.row + 1,
                 text,
                 kind,
-                enclosed_by: comment_only_wrapper(node, source, lang)
-                    .filter(|w| jsx::taking_braces_is_invisible(source, *w))
-                    .map(|w| Span {
-                        start_byte: w.start_byte(),
-                        end_byte: w.end_byte(),
-                        start_row: w.start_position().row + 1,
-                        end_row: w.end_position().row + 1,
-                    }),
+                enclosed_by: jsx::container(node, source, lang),
             });
         }
     }
@@ -187,44 +182,6 @@ pub fn find_comments(source: &str, lang: Lang) -> Result<Vec<Comment>, Error> {
 
     out.sort_by_key(|c| c.start_byte);
     Ok(out)
-}
-
-/// The delimited node holding this comment and nothing but comments — see
-/// [`Lang::comment_only_wrappers`]. It goes when the last comment under it
-/// goes, which is a question [`strip`] answers, not this one; a node holding
-/// anything else (`{/* note */ value}`) keeps its delimiters.
-///
-/// Position decides as much as kind: in `<Foo bar={/* c */} />` the braces are
-/// the attribute's value rather than packaging around a comment, and `bar=`
-/// alone does not parse.
-///
-/// Those delimiters must really be there: on a malformed or partial parse the
-/// node can run to the end of the file, and widening onto that would eat code.
-fn comment_only_wrapper<'a>(
-    node: tree_sitter::Node<'a>,
-    source: &str,
-    lang: Lang,
-) -> Option<tree_sitter::Node<'a>> {
-    let kinds = lang.comment_only_wrappers();
-    if kinds.is_empty() {
-        return None;
-    }
-    let parent = node.parent()?;
-    if !kinds.contains(&parent.kind()) {
-        return None;
-    }
-    if parent.parent().is_some_and(|g| g.kind() == "jsx_attribute") {
-        return None;
-    }
-    let text = source.get(parent.start_byte()..parent.end_byte())?;
-    if !text.starts_with('{') || !text.ends_with('}') {
-        return None;
-    }
-    let mut cursor = parent.walk();
-    let only_comments = parent
-        .children(&mut cursor)
-        .all(|child| matches!(child.kind(), "{" | "}" | "comment"));
-    only_comments.then_some(parent)
 }
 
 /// Re-parse injected sub-language regions (e.g. Astro frontmatter as TypeScript)
@@ -250,11 +207,8 @@ fn collect_injected<'a>(
                 c.end_row += row_off;
                 // Dead while the only injection is Astro's TypeScript
                 // frontmatter, which has no JSX. Correct the day one does.
-                if let Some(s) = &mut c.enclosed_by {
-                    s.start_byte += byte_off;
-                    s.end_byte += byte_off;
-                    s.start_row += row_off;
-                    s.end_row += row_off;
+                if let Some(w) = &mut c.enclosed_by {
+                    w.shift(byte_off, row_off);
                 }
                 out.push(c);
             }
@@ -303,20 +257,15 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
     }
     let removed = removing.iter().filter(|&&r| r).count();
 
-    let survivors: HashSet<Span> = comments
-        .iter()
-        .zip(&removing)
-        .filter(|(_, &r)| !r)
-        .filter_map(|(c, _)| c.enclosed_by)
-        .collect();
+    let takeable = takeable_containers(source, &comments, &removing);
 
     let mut spans: Vec<Removal> = comments
         .iter()
         .zip(&removing)
         .filter(|(_, &r)| r)
         .map(
-            |(c, _)| match c.enclosed_by.filter(|w| !survivors.contains(w)) {
-                Some(wrapper) => Removal::wrapping(wrapper),
+            |(c, _)| match c.enclosed_by.filter(|w| takeable.contains(w)) {
+                Some(container) => Removal::wrapping(container.span),
                 None => Removal::bare(c.span()),
             },
         )
@@ -330,4 +279,48 @@ pub fn strip(source: &str, lang: Lang, opts: &Options) -> Result<Outcome, Error>
         removed,
         preserved,
     })
+}
+
+/// Which containers may lose their braces. Decided here rather than at parse
+/// time because it depends on which comments are leaving: a container whose
+/// comment stays keeps its braces, and holds the text either side of it apart.
+///
+/// The rest are judged in adjacent runs. Removing one container joins the text
+/// beside it to its neighbour's, so a run of them stands or falls whole — and
+/// judging a run that includes a container which is staying would prove an
+/// identity nobody relies on.
+fn takeable_containers(
+    source: &str,
+    comments: &[Comment],
+    removing: &[bool],
+) -> HashSet<Container> {
+    let staying: HashSet<Container> = comments
+        .iter()
+        .zip(removing)
+        .filter(|(_, &r)| !r)
+        .filter_map(|(c, _)| c.enclosed_by)
+        .collect();
+
+    let mut going: Vec<Container> = comments
+        .iter()
+        .zip(removing)
+        .filter(|(_, &r)| r)
+        .filter_map(|(c, _)| c.enclosed_by)
+        .filter(|w| !staying.contains(w))
+        .collect();
+    going.dedup();
+
+    let mut takeable = HashSet::new();
+    let mut start = 0;
+    while start < going.len() {
+        let mut end = start + 1;
+        while end < going.len() && going[end - 1].adjoins(going[end]) {
+            end += 1;
+        }
+        if jsx::taking_braces_is_invisible(source, &going[start..end]) {
+            takeable.extend(&going[start..end]);
+        }
+        start = end;
+    }
+    takeable
 }
