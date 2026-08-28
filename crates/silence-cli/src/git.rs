@@ -16,8 +16,13 @@ pub struct GitChanges {
     pub files: HashMap<PathBuf, Lines>,
 }
 
-fn open() -> Result<(Repository, PathBuf)> {
-    let repo = Repository::discover(".").context("not inside a git repository")?;
+fn open_from(start: &Path) -> Result<(Repository, PathBuf)> {
+    let start = if start.is_dir() {
+        start
+    } else {
+        start.parent().unwrap_or(start)
+    };
+    let repo = Repository::discover(start).context("not inside a git repository")?;
     let root = repo
         .workdir()
         .context("bare repositories are not supported")?
@@ -25,12 +30,24 @@ fn open() -> Result<(Repository, PathBuf)> {
     Ok((repo, root))
 }
 
+fn open() -> Result<(Repository, PathBuf)> {
+    open_from(Path::new("."))
+}
+
 pub fn root() -> Result<PathBuf> {
     Ok(open()?.1)
 }
 
+pub fn root_from(start: &Path) -> Result<PathBuf> {
+    Ok(open_from(start)?.1)
+}
+
 pub fn changes(scope: Scope) -> Result<GitChanges> {
-    let (repo, root) = open()?;
+    changes_from(Path::new("."), scope)
+}
+
+pub fn changes_from(start: &Path, scope: Scope) -> Result<GitChanges> {
+    let (repo, root) = open_from(start)?;
 
     let mut hunks: HashMap<PathBuf, Vec<(usize, usize)>> = HashMap::new();
     let mut untracked: HashSet<PathBuf> = HashSet::new();

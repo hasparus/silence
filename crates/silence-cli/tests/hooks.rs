@@ -178,6 +178,56 @@ fn hook_only_strips_inside_the_uncommitted_change() -> TestResult {
 }
 
 #[test]
+fn cursor_hook_run_from_config_dir_discovers_the_targets_repo() -> TestResult {
+    let repo = tmp("hook-cursor-target-repo")?;
+    git(&repo, &["init", "-q"])?;
+    git(&repo, &["config", "user.email", "t@t"])?;
+    git(&repo, &["config", "user.name", "t"])?;
+    git(&repo, &["config", "commit.gpgsign", "false"])?;
+
+    let path = repo.join("existing.spec.ts");
+    std::fs::write(
+        &path,
+        "// committed explanation, must survive\nconst existing = 1;\n",
+    )?;
+    git(&repo, &["add", "."])?;
+    git(&repo, &["commit", "-q", "-m", "baseline", "--no-gpg-sign"])?;
+
+    std::fs::write(
+        &path,
+        "// committed explanation, must survive\nconst existing = 1;\nconst added = 2; // agent slop\n",
+    )?;
+
+    let config_dir = tmp("hook-cursor-config-dir")?;
+    let payload = serde_json::json!({
+        "conversation_id": "cursor-conversation",
+        "tool_name": "Write",
+        "tool_input": {
+            "file_path": path.to_string_lossy(),
+            "content": std::fs::read_to_string(&path)?,
+        },
+        "tool_output": serde_json::json!({
+            "file_path": path.to_string_lossy(),
+            "success": true,
+        }).to_string(),
+        "workspace_roots": [repo.to_string_lossy()],
+    })
+    .to_string();
+
+    let out = run_hook_stdin(&config_dir, &payload)?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(path)?,
+        "// committed explanation, must survive\nconst existing = 1;\nconst added = 2;\n"
+    );
+    Ok(())
+}
+
+#[test]
 fn hook_reads_file_path_from_stdin_json() -> TestResult {
     let repo = tmp("hook-stdin-json")?;
     git(&repo, &["init", "-q"])?;
