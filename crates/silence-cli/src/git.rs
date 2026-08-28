@@ -16,8 +16,13 @@ pub struct GitChanges {
     pub files: HashMap<PathBuf, Lines>,
 }
 
-fn open() -> Result<(Repository, PathBuf)> {
-    let repo = Repository::discover(".").context("not inside a git repository")?;
+fn open_from(start: &Path) -> Result<(Repository, PathBuf)> {
+    let start = if start.is_dir() {
+        start
+    } else {
+        start.parent().unwrap_or(start)
+    };
+    let repo = Repository::discover(start).context("not inside a git repository")?;
     let root = repo
         .workdir()
         .context("bare repositories are not supported")?
@@ -25,8 +30,16 @@ fn open() -> Result<(Repository, PathBuf)> {
     Ok((repo, root))
 }
 
+fn open() -> Result<(Repository, PathBuf)> {
+    open_from(Path::new("."))
+}
+
 pub fn root() -> Result<PathBuf> {
     Ok(open()?.1)
+}
+
+pub fn root_from(start: &Path) -> Result<PathBuf> {
+    Ok(open_from(start)?.1)
 }
 
 pub fn changes(scope: Scope) -> Result<GitChanges> {
@@ -78,6 +91,36 @@ pub fn changes(scope: Scope) -> Result<GitChanges> {
         root,
         files: merge(hunks, untracked),
     })
+}
+
+/// Return the changed lines for one file without walking every path in its
+/// worktree. Hook events normally name one target, and large repositories make
+/// a repository-wide status scan disproportionately expensive.
+pub fn change_for_path(root: &Path, path: &Path) -> Result<Option<Lines>> {
+    let (repo, discovered_root) = open_from(root)?;
+    let canonical_root = discovered_root.canonicalize().unwrap_or(discovered_root);
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let relative = canonical_path
+        .strip_prefix(&canonical_root)
+        .with_context(|| format!("{} is outside git workdir", path.display()))?;
+
+    let head_tree = repo.head().ok().and_then(|head| head.peel_to_tree().ok());
+    let mut opts = diff_opts();
+    opts.pathspec(relative).disable_pathspec_match(true);
+    let diff = repo
+        .diff_tree_to_workdir(head_tree.as_ref(), Some(&mut opts))
+        .context("failed to diff uncommitted changes")?;
+    let mut hunks = HashMap::new();
+    collect_hunks(&diff, &mut hunks)?;
+
+    if let Some(ranges) = hunks.remove(relative) {
+        return Ok(Some(Lines::Ranges(ranges)));
+    }
+
+    let status = repo
+        .status_file(relative)
+        .with_context(|| format!("failed to read git status for {}", relative.display()))?;
+    Ok(status.is_wt_new().then_some(Lines::All))
 }
 
 /// A path can be both diffed and untracked — a staged delete that was recreated
