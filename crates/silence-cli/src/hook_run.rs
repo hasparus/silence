@@ -1,7 +1,5 @@
 use serde_json::json;
 use silence_core::{CommentKinds, LineMode, Lines, PreserveConfig};
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -17,22 +15,17 @@ enum HookSkip {
     OutsideRepo(PathBuf),
 }
 
-/// Uncommitted diffs for harnesses that do not report what their write touched.
+/// Git context for harnesses that do not report what their write touched.
 /// Hooks may run from an agent's config directory rather than the edited repo,
-/// so each target discovers its own worktree. Scans stay lazy and are shared by
-/// targets in the same worktree.
+/// so each target discovers and diffs its own worktree.
 struct GitFallback {
-    process_root: Option<PathBuf>,
-    changed_by_root: RefCell<HashMap<PathBuf, Option<HashMap<PathBuf, Lines>>>>,
+    process_has_repo: bool,
 }
 
 impl GitFallback {
     fn discover() -> GitFallback {
         GitFallback {
-            process_root: git::root()
-                .ok()
-                .map(|root| root.canonicalize().unwrap_or(root)),
-            changed_by_root: RefCell::new(HashMap::new()),
+            process_has_repo: git::root().is_ok(),
         }
     }
 
@@ -44,39 +37,20 @@ impl GitFallback {
     fn lines_for(&self, path: &Path) -> Result<Lines, HookSkip> {
         let root = match git::root_from(path) {
             Ok(root) => root.canonicalize().unwrap_or(root),
-            Err(_) if self.process_root.is_some() => {
+            Err(_) if self.process_has_repo => {
                 return Err(HookSkip::OutsideRepo(path.to_path_buf()));
             }
             Err(_) => return Ok(Lines::All),
         };
 
-        let mut scans = self.changed_by_root.borrow_mut();
-        let changed = scans
-            .entry(root.clone())
-            .or_insert_with(|| Self::scan(&root));
-        match changed {
-            None => Ok(Lines::All),
-            Some(changed) => changed
-                .get(path)
-                .cloned()
-                .ok_or_else(|| HookSkip::NotInGitChanges(path.to_path_buf())),
+        match git::change_for_path(&root, path) {
+            Ok(Some(lines)) => Ok(lines),
+            Ok(None) => Err(HookSkip::NotInGitChanges(path.to_path_buf())),
+            Err(error) => {
+                eprintln!("silence: git scan failed, stripping whole file: {error}");
+                Ok(Lines::All)
+            }
         }
-    }
-
-    fn scan(root: &Path) -> Option<HashMap<PathBuf, Lines>> {
-        let changes = git::changes_from(root, git::Scope::All)
-            .inspect_err(|e| eprintln!("silence: git scan failed, stripping whole files: {e}"))
-            .ok()?;
-        Some(
-            changes
-                .files
-                .into_iter()
-                .map(|(rel, lines)| {
-                    let abs = root.join(rel);
-                    (abs.canonicalize().unwrap_or(abs), lines)
-                })
-                .collect(),
-        )
     }
 }
 

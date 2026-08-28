@@ -16,6 +16,22 @@ pub fn tmp(name: &str) -> TResult<PathBuf> {
     Ok(dir)
 }
 
+#[allow(dead_code)]
+pub fn tmp_outside_repo(name: &str) -> TResult<PathBuf> {
+    let dir = std::env::temp_dir().join(format!("silence-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir)?;
+    let discovery = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&dir)
+        .output()?;
+    assert!(
+        !discovery.status.success(),
+        "temporary directory is inside git"
+    );
+    Ok(dir)
+}
+
 pub fn run_silence(dir: &Path, args: &[&str], extra_env: &[(&str, &Path)]) -> TResult<Output> {
     let mut cmd = Command::new(silence_bin());
     cmd.args(args).current_dir(dir);
